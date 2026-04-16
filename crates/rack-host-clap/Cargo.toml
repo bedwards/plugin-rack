@@ -1,0 +1,14 @@
+[package]
+name = "rack-host-clap"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "CLAP guest plugin hosting for plugin-rack"
+
+[dependencies]
+rack-core.workspace = true
+anyhow.workspace = true
+log.workspace = true

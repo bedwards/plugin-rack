@@ -1,0 +1,13 @@
+[package]
+name = "rack-gui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "GUI for plugin-rack (vizia primary, iced fallback for wrap layout)"
+
+[dependencies]
+rack-core.workspace = true
+log.workspace = true

@@ -1,0 +1,49 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/rack-core",
+    "crates/rack-host-clap",
+    "crates/rack-host-vst3",
+    "crates/rack-gui",
+    "crates/rack-ipc",
+    "crates/rack-plugin",
+    "xtask",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["Brian Edwards <brian.mabry.edwards@gmail.com>"]
+repository = "https://github.com/bedwards/plugin-rack"
+
+[workspace.dependencies]
+# nih_plug: maintained community fork (robbert-vdh/nih-plug is unmaintained as of 2026-03-29)
+nih_plug = { git = "https://github.com/BillyDM/nih-plug.git", rev = "3e0c4ac0430bffd5526b7325b8362369986d24af", features = ["assert_process_allocs"] }
+nih_plug_xtask = { git = "https://github.com/BillyDM/nih-plug.git", rev = "3e0c4ac0430bffd5526b7325b8362369986d24af" }
+
+# In-workspace crates
+rack-core = { path = "crates/rack-core" }
+rack-host-clap = { path = "crates/rack-host-clap" }
+rack-host-vst3 = { path = "crates/rack-host-vst3" }
+rack-gui = { path = "crates/rack-gui" }
+rack-ipc = { path = "crates/rack-ipc" }
+
+# Shared
+parking_lot = "0.12"
+crossbeam = "0.8"
+crossbeam-channel = "0.5"
+anyhow = "1"
+thiserror = "2"
+log = "0.4"
+atomic_float = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"

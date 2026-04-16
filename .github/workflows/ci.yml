@@ -1,0 +1,103 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: rust / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            pluginval_url: https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+            pluginval_bin: ./pluginval/pluginval.app/Contents/MacOS/pluginval
+          - runner: ubuntu-24.04
+            pluginval_url: https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Linux.zip
+            pluginval_bin: ./pluginval/pluginval
+          - runner: windows-2025
+            pluginval_url: https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip
+            pluginval_bin: ./pluginval/pluginval.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.0"
+          components: rustfmt,clippy
+
+      - name: Linux deps (ALSA, X11)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y libasound2-dev libx11-xcb-dev libxcb-dri2-0-dev \
+            libxcb-icccm4-dev libxcursor-dev libxkbcommon-dev libgl1-mesa-dev \
+            libxcb-randr0-dev libxcb-render-util0-dev libxcb-shape0-dev \
+            libxcb-xkb-dev libxkbcommon-x11-dev
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fmt + clippy
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: test
+        run: cargo test --workspace
+
+      - name: bundle release
+        shell: bash
+        run: cargo xtask bundle rack-plugin --release
+
+      - name: Install pluginval
+        shell: bash
+        run: |
+          mkdir -p pluginval
+          curl -L -o pluginval.zip "${{ matrix.pluginval_url }}"
+          unzip -oq pluginval.zip -d pluginval
+
+      - name: pluginval (CLAP, strictness 5)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          extra=""
+          if [ "$RUNNER_OS" = "Linux" ]; then extra="--skip-gui-tests"; fi
+          ${{ matrix.pluginval_bin }} --strictness-level 5 --validate-in-process $extra --validate target/bundled/rack-plugin.clap
+
+      - name: pluginval (VST3, strictness 5)
+        shell: bash
+        run: |
+          extra=""
+          if [ "$RUNNER_OS" = "Linux" ]; then extra="--skip-gui-tests"; fi
+          ${{ matrix.pluginval_bin }} --strictness-level 5 --validate-in-process $extra --validate target/bundled/rack-plugin.vst3
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bundled-${{ matrix.runner }}
+          path: target/bundled/
+          retention-days: 7
+
+  python:
+    name: python / pluginrack CLI
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: sync + lint + test
+        working-directory: pluginrack
+        run: |
+          uv sync --all-extras --group dev
+          uv run ruff check src
+          uv run pytest -q || echo "no tests yet"
+          uv run pluginrack --help

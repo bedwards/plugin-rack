@@ -1,0 +1,33 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: "17 7 * * *"   # 07:17 UTC daily
+  workflow_dispatch:
+
+jobs:
+  strict:
+    name: pluginval strict
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.0"
+      - uses: Swatinem/rust-cache@v2
+      - name: bundle universal
+        run: cargo xtask bundle-universal rack-plugin --release
+      - name: install pluginval
+        run: |
+          mkdir -p pluginval
+          curl -L -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+          unzip -oq pluginval.zip -d pluginval
+      - name: pluginval strictness 10
+        run: |
+          PV=./pluginval/pluginval.app/Contents/MacOS/pluginval
+          $PV --strictness-level 10 --validate-in-process --validate target/bundled/rack-plugin.vst3
+          $PV --strictness-level 10 --validate-in-process --validate target/bundled/rack-plugin.clap
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-bundled-universal
+          path: target/bundled/

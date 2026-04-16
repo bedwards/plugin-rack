@@ -1,0 +1,21 @@
+[package]
+name = "rack-plugin"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "nih_plug entry point for plugin-rack"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+nih_plug.workspace = true
+parking_lot.workspace = true
+rack-core.workspace = true
+rack-gui.workspace = true
+rack-host-clap.workspace = true
+rack-host-vst3.workspace = true
+rack-ipc.workspace = true

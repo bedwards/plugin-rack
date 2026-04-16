@@ -1,0 +1,27 @@
+target/
+Cargo.lock.bak
+*.rs.bk
+.DS_Store
+
+# Python (uv)
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+*.egg-info/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# CI/local caches
+.cargo-cache/
+pluginval-logs/
+tools/pluginval*
+tools/validator*
+vst3sdk/
