@@ -5,11 +5,14 @@
 //!       Hosting and IPC land in subsequent issues.
 //! v0.5: persist `link_tag` (issue #12). This is the user-facing group
 //!       identifier used by `rack-ipc::SharedRegistry` for sibling
-//!       discovery. The registry itself is NOT yet attached here — that
-//!       lands with issue #13 (console-view) when we start a heartbeat
-//!       thread in `initialize()` / `deactivate()`. For now we only
-//!       persist the tag so saved-rack sessions preserve their group
-//!       membership across DAW reloads.
+//!       discovery.
+//! v0.6: live IPC discovery (issue #12). When the persisted `link_tag`
+//!       is non-empty we claim a registry slot and spawn a 500 ms
+//!       heartbeat thread inside `initialize()`; the resulting
+//!       `DiscoveryHandle` is dropped on `deactivate()` (or when the
+//!       host drops the plugin), which stops the heartbeat and zeros
+//!       `alive` on the slot. Sibling instances observe the drop within
+//!       one TTL window (2 s default; 4 s acceptance budget).
 
 use crossbeam::atomic::AtomicCell;
 use nih_plug::prelude::*;
@@ -17,6 +20,7 @@ use nih_plug_egui::EguiState;
 use parking_lot::Mutex;
 use rack_core::StripState;
 use rack_gui::{LayoutMode, create_editor, default_editor_state};
+use rack_ipc::{DiscoveryHandle, SharedRegistry};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
@@ -138,12 +142,22 @@ impl Default for PluginRackParams {
 
 struct PluginRack {
     params: Arc<PluginRackParams>,
+
+    /// Live IPC discovery handle. Populated by `initialize()` if the
+    /// persisted `link_tag` is non-empty, dropped by `deactivate()` (or
+    /// by the plugin being dropped). A `Mutex<Option<_>>` rather than a
+    /// `OnceLock` because the host may call `initialize` / `deactivate`
+    /// repeatedly across the lifetime of one `PluginRack` instance and
+    /// we want a fresh handle each time (persisted `link_tag` might
+    /// have changed in between).
+    discovery: Mutex<Option<DiscoveryHandle>>,
 }
 
 impl Default for PluginRack {
     fn default() -> Self {
         Self {
             params: Arc::new(PluginRackParams::default()),
+            discovery: Mutex::new(None),
         }
     }
 }
@@ -181,6 +195,55 @@ impl Plugin for PluginRack {
             self.params.editor_state.clone(),
             self.params.layout_mode.clone(),
         )
+    }
+
+    fn initialize(
+        &mut self,
+        _audio_io_layout: &AudioIOLayout,
+        _buffer_config: &BufferConfig,
+        _context: &mut impl InitContext<Self>,
+    ) -> bool {
+        // Drop any prior discovery session — `initialize` can be called
+        // more than once for a single instance (e.g. host restores state
+        // while we're already active) and we want a single in-flight
+        // handle at a time.
+        *self.discovery.lock() = None;
+
+        // Pull the persisted link_tag. Empty = UNLINKED rack; skip
+        // discovery entirely (no slot, no thread) per acceptance
+        // criterion "unlinked default claims nothing".
+        let tag = self.params.link_tag.lock().clone();
+        if tag.is_empty() {
+            return true;
+        }
+
+        // Attach to the registry. If either step fails we log and proceed
+        // without discovery — a broken registry segment must not prevent
+        // audio processing from starting.
+        match SharedRegistry::open_or_create() {
+            Ok(registry) => {
+                let registry = Arc::new(registry);
+                match registry.start_discovery(tag.as_bytes()) {
+                    Ok(handle) => {
+                        *self.discovery.lock() = Some(handle);
+                    }
+                    Err(e) => {
+                        nih_log!("rack-plugin: start_discovery failed: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                nih_log!("rack-plugin: SharedRegistry open_or_create failed: {e}");
+            }
+        }
+        true
+    }
+
+    fn deactivate(&mut self) {
+        // Dropping the DiscoveryHandle stops the heartbeat thread and
+        // releases the slot. Siblings observe our disappearance within
+        // one TTL window.
+        *self.discovery.lock() = None;
     }
 
     fn process(

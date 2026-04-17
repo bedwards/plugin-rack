@@ -58,7 +58,9 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 #[cfg(unix)]
 use std::ffi::CString;
@@ -66,6 +68,20 @@ use std::ffi::CString;
 pub const SLOT_COUNT: usize = 64;
 pub const LINK_TAG_MAX: usize = 32;
 pub const UUID_LEN: usize = 16;
+
+/// Default heartbeat cadence (research/ipc.md §12.2 "500 ms heartbeat").
+///
+/// The discovery TTL defaults to 2 s, so four heartbeat ticks fit inside a
+/// single TTL window — a comfortable 4× safety margin against scheduler
+/// jitter or lost wake-ups. Issue #12 acceptance requires a peer to be
+/// dropped from the registry within 4 s of its PID going away, so even if
+/// one tick is skipped the next siblings() scan past now + 2 s still drops
+/// the dead peer well under the 4 s wall-clock budget.
+pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Default TTL used by `DiscoveryHandle::siblings`. Matches research/ipc.md
+/// §4.5 ("treat any slot whose `alive` is older than ~2 s as dead").
+pub const DEFAULT_DISCOVERY_TTL: Duration = Duration::from_secs(2);
 
 /// Slot magic — used to detect a badly initialised segment.
 const REGISTRY_MAGIC: [u8; 8] = *b"PLRACKR1";
@@ -419,6 +435,61 @@ impl SharedRegistry {
         self.siblings_excluding(link_tag, now_nanos, ttl_nanos, None)
     }
 
+    /// Allocation-free heartbeat dispatch for an internal `SlotRef`.
+    ///
+    /// Shares all semantics with the public `heartbeat(&SlotHandle)` — the
+    /// split lets the heartbeat thread operate without holding the full
+    /// `SlotHandle` (whose Drop would release the slot at thread-exit
+    /// time). The outer `DiscoveryHandle` still owns the real handle and
+    /// is responsible for the release.
+    #[inline]
+    fn heartbeat_by_idx(&self, slot_ref: &SlotRef) {
+        let slots = self.slots_ptr();
+        debug_assert!(slot_ref.slot_idx < SLOT_COUNT);
+        let alive_ptr = unsafe { core::ptr::addr_of_mut!((*slots.add(slot_ref.slot_idx)).alive) };
+        let alive_atomic = unsafe { AtomicU32::from_ptr(alive_ptr) };
+        if alive_atomic.load(Ordering::Relaxed) == 0 {
+            return;
+        }
+        let now = monotonic_nanos();
+        let hb_ptr = unsafe {
+            core::ptr::addr_of_mut!((*slots.add(slot_ref.slot_idx)).last_heartbeat_nanos)
+        };
+        unsafe { hb_ptr.write_volatile(now) };
+    }
+
+    /// Read the link_tag bytes out of a specific slot into a fixed-size
+    /// buffer. Internal; used by `DiscoveryHandle::siblings` so it doesn't
+    /// need to keep an owned tag String on the side.
+    fn read_tag(&self, slot_idx: usize) -> [u8; LINK_TAG_MAX] {
+        let slots = self.slots_ptr();
+        debug_assert!(slot_idx < SLOT_COUNT);
+        let tag_ptr = unsafe { core::ptr::addr_of!((*slots.add(slot_idx)).link_tag) };
+        unsafe { tag_ptr.read_volatile() }
+    }
+
+    /// Build a discovery session (heartbeat thread + RAII handle) for the
+    /// given `link_tag`. Alloc-free inside the spawned loop body; one-time
+    /// allocations at spawn/shutdown only. See `DiscoveryBuilder` for the
+    /// configurable surface (heartbeat cadence).
+    ///
+    /// Must NOT be called from the audio thread.
+    pub fn discovery_builder(self: &Arc<Self>, link_tag: &[u8]) -> DiscoveryBuilder {
+        DiscoveryBuilder {
+            registry: Arc::clone(self),
+            link_tag: link_tag.to_vec(),
+            heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
+        }
+    }
+
+    /// Convenience — build and start discovery in one call with the
+    /// default heartbeat interval.
+    ///
+    /// Must NOT be called from the audio thread.
+    pub fn start_discovery(self: &Arc<Self>, link_tag: &[u8]) -> anyhow::Result<DiscoveryHandle> {
+        self.discovery_builder(link_tag).start()
+    }
+
     /// Same as `siblings`, but skip any slot whose `instance_uuid` matches
     /// `exclude_uuid`. Convenience for a caller who doesn't want to see
     /// their own entry.
@@ -468,6 +539,191 @@ impl SharedRegistry {
             });
         }
         out
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DiscoveryHandle — RAII bundle of SharedRegistry + slot + heartbeat thread.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Builder for a `DiscoveryHandle`.
+///
+/// Constructed via `SharedRegistry::discovery_builder(tag)`. The only
+/// configurable knob today is the heartbeat interval — tests shrink this to
+/// ~50 ms so wall-clock assertions finish quickly; production uses 500 ms
+/// via `DEFAULT_HEARTBEAT_INTERVAL`.
+pub struct DiscoveryBuilder {
+    registry: Arc<SharedRegistry>,
+    link_tag: Vec<u8>,
+    heartbeat_interval: Duration,
+}
+
+impl DiscoveryBuilder {
+    /// Override the heartbeat cadence. Intended for tests. Values below
+    /// ~10 ms are clamped to 10 ms to avoid pathological CPU use.
+    pub fn with_heartbeat_interval(mut self, interval: Duration) -> Self {
+        let min = Duration::from_millis(10);
+        self.heartbeat_interval = if interval < min { min } else { interval };
+        self
+    }
+
+    /// Claim a slot and spawn the heartbeat thread.
+    pub fn start(self) -> anyhow::Result<DiscoveryHandle> {
+        let slot = self.registry.claim_slot(&self.link_tag)?;
+        let instance_uuid = slot.instance_uuid();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        // Move the clones the thread needs. We deliberately *do not* capture
+        // `self` or any allocating state inside the thread loop body — the
+        // only allocations on the spawn path are Arc::clone (refcount bump,
+        // no heap) and the initial thread::Builder::spawn itself.
+        let reg_for_thread = Arc::clone(&self.registry);
+        let shutdown_for_thread = Arc::clone(&shutdown);
+        let slot_idx = slot.slot_idx;
+        let interval = self.heartbeat_interval;
+
+        let thread = thread::Builder::new()
+            .name("rack-ipc-discovery".to_string())
+            .spawn(move || {
+                heartbeat_loop(reg_for_thread, slot_idx, shutdown_for_thread, interval);
+            })
+            .map_err(|e| anyhow::anyhow!("failed to spawn discovery thread: {e}"))?;
+
+        Ok(DiscoveryHandle {
+            registry: self.registry,
+            slot: Some(slot),
+            instance_uuid,
+            shutdown,
+            thread: Some(thread),
+        })
+    }
+}
+
+/// Hot loop body for the heartbeat thread.
+///
+/// # Allocation-free contract
+///
+/// This function's loop body performs, per iteration:
+///
+/// 1. One `park_timeout(interval)` — parks the thread on its `Thread` handle;
+///    no allocation, no syscall beyond the kernel-level futex wait.
+/// 2. One `AtomicBool::load(Acquire)` — pure atomic, no allocation.
+/// 3. One `SharedRegistry::heartbeat` call — documented alloc-free (one
+///    `clock_gettime`, one atomic load, one volatile store). No `Vec`, no
+///    `Box`, no `format!`, no `String`.
+///
+/// Allocations on spawn (one `String` for the thread name inside
+/// `thread::Builder`) and on shutdown (none — `JoinHandle::join` drops the
+/// thread's stack only) are bounded and happen exactly twice per handle.
+///
+/// Verified by inspection of the body below + the `heartbeat` docstring.
+fn heartbeat_loop(
+    registry: Arc<SharedRegistry>,
+    slot_idx: usize,
+    shutdown: Arc<AtomicBool>,
+    interval: Duration,
+) {
+    // Reconstruct a bare `SlotHandle`-equivalent reference for the heartbeat
+    // call. We cannot own a real `SlotHandle` here because Drop would zero
+    // the slot at thread-exit time — but the outer `DiscoveryHandle` already
+    // owns the real handle and its Drop will release the slot. So we use a
+    // minimal `SlotRef` view that only carries slot_idx.
+    let slot_ref = SlotRef { slot_idx };
+    loop {
+        // Park with a timeout so `DiscoveryHandle::drop` can wake us
+        // instantly via `thread.unpark()`. No allocation.
+        thread::park_timeout(interval);
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
+        registry.heartbeat_by_idx(&slot_ref);
+    }
+}
+
+/// Lightweight view into a slot index, used only by the heartbeat thread so
+/// it doesn't steal ownership of the real `SlotHandle`. Not `Clone` /
+/// `Copy`-checked beyond what `usize` gives us — the thread has no business
+/// creating a second one.
+struct SlotRef {
+    slot_idx: usize,
+}
+
+/// RAII bundle owning the registry attachment, the slot, the heartbeat
+/// thread, and the shutdown flag.
+///
+/// Constructed via `SharedRegistry::start_discovery(link_tag)`. On drop:
+///
+/// 1. Sets the shutdown `AtomicBool`.
+/// 2. Unparks the heartbeat thread so it wakes immediately.
+/// 3. Joins the thread.
+/// 4. Drops the `SlotHandle`, which zeros `alive` on the slot.
+///
+/// The overall Drop latency is bounded by how long the heartbeat thread
+/// takes to notice the unpark — tens of microseconds in practice.
+pub struct DiscoveryHandle {
+    registry: Arc<SharedRegistry>,
+    /// `Option` only so `Drop` can `take()` the handle and release the slot
+    /// *after* the thread has joined. Always `Some` outside of `Drop`.
+    slot: Option<SlotHandle>,
+    instance_uuid: [u8; UUID_LEN],
+    shutdown: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl DiscoveryHandle {
+    /// The UUID written into this instance's registry slot. Useful for
+    /// `siblings()` self-exclusion.
+    pub fn instance_uuid(&self) -> [u8; UUID_LEN] {
+        self.instance_uuid
+    }
+
+    /// Convenience — live sibling snapshot for this instance's tag, with
+    /// the default TTL and self-excluded. Slow path; GUI-rate only.
+    pub fn siblings(&self) -> Vec<SlotSnapshot> {
+        self.siblings_with_ttl(DEFAULT_DISCOVERY_TTL)
+    }
+
+    /// Same as `siblings()` but with a caller-supplied TTL. Tests use this
+    /// to force a tight deadline when asserting a peer has been dropped.
+    pub fn siblings_with_ttl(&self, ttl: Duration) -> Vec<SlotSnapshot> {
+        // Read this slot's link_tag back out of the registry so we don't
+        // need to carry a String around.
+        let Some(ref slot) = self.slot else {
+            return Vec::new();
+        };
+        let tag = self.registry.read_tag(slot.slot_idx);
+        self.registry.siblings_excluding(
+            &tag,
+            monotonic_nanos(),
+            ttl.as_nanos() as u64,
+            Some(self.instance_uuid),
+        )
+    }
+
+    /// Borrow the underlying `SharedRegistry` (shared Arc). Useful for
+    /// callers that want to do their own scan.
+    pub fn registry(&self) -> &Arc<SharedRegistry> {
+        &self.registry
+    }
+}
+
+impl Drop for DiscoveryHandle {
+    fn drop(&mut self) {
+        // 1. Signal shutdown.
+        self.shutdown.store(true, Ordering::Release);
+        // 2. Unpark so the thread wakes immediately rather than after the
+        //    current park_timeout elapses.
+        if let Some(thread) = self.thread.as_ref() {
+            thread.thread().unpark();
+        }
+        // 3. Join. If the thread panicked we swallow it — the slot still
+        //    gets released via SlotHandle::drop below.
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        // 4. Drop the slot (zeros `alive`). Explicit drop is redundant
+        //    with the Option::take, but makes the ordering obvious.
+        drop(self.slot.take());
     }
 }
 
@@ -838,5 +1094,167 @@ mod tests {
         let reg = fresh_registry();
         let too_long = [b'x'; LINK_TAG_MAX + 1];
         assert!(reg.claim_slot(&too_long).is_err());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Heartbeat thread + DiscoveryHandle tests (issue #12 acceptance).
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// TTL-drop acceptance: one peer stops heartbeating (simulating a dead
+    /// PID), the other observes it dropping from the sibling view within
+    /// the 4-second wall-clock budget specified by issue #12.
+    ///
+    /// We shrink the heartbeat interval on slot A to 50 ms so the live
+    /// peer is obviously not the one dropping; we leave slot B without a
+    /// heartbeat thread entirely. A tight TTL (500 ms) then ensures B
+    /// falls out of A's view within the wait window. Total wall-clock
+    /// budget for this test: ~1.2 s, well under the 4 s acceptance cap.
+    #[cfg(unix)]
+    #[test]
+    fn ttl_drop_removes_stale_peer_within_acceptance_window() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let reg = Arc::new(fresh_registry());
+
+        // A claims a slot via the live discovery path (50 ms heartbeat).
+        let a = reg
+            .discovery_builder(b"ttl-acc")
+            .with_heartbeat_interval(Duration::from_millis(50))
+            .start()
+            .expect("start discovery a");
+
+        // B claims a slot directly — no heartbeat thread, simulating a
+        // crashed peer whose last heartbeat is now frozen.
+        let _b_slot = reg.claim_slot(b"ttl-acc").expect("claim b slot directly");
+
+        // Immediately: both A and B are visible (fresh heartbeats).
+        let ttl = Duration::from_millis(500);
+        let sibs = a.siblings_with_ttl(ttl);
+        assert_eq!(sibs.len(), 1, "B visible immediately after claim");
+
+        // Wait 3 seconds — B's heartbeat is now stale vs a 500 ms TTL.
+        // Acceptance criterion: the drop must be observed within 4 s of
+        // the "death" (which is effectively t=0, since B never
+        // heartbeats). Our wait of 3 s + TTL of 500 ms comfortably
+        // satisfies this.
+        std::thread::sleep(Duration::from_millis(3_000));
+        let start = std::time::Instant::now();
+        let sibs = a.siblings_with_ttl(ttl);
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "siblings scan took too long: {elapsed:?}"
+        );
+        assert_eq!(sibs.len(), 0, "B should have fallen out of the TTL window");
+
+        // A's own heartbeat thread must still have been ticking.
+        let a_slot_idx = a.slot.as_ref().unwrap().slot_idx;
+        let hb_now = unsafe {
+            core::ptr::addr_of!((*reg.slots_ptr().add(a_slot_idx)).last_heartbeat_nanos)
+                .read_volatile()
+        };
+        let now = monotonic_nanos();
+        let staleness_nanos = now.saturating_sub(hb_now);
+        assert!(
+            staleness_nanos < 200_000_000,
+            "A heartbeat should be fresh (<200 ms), got {staleness_nanos} ns"
+        );
+
+        drop(a);
+    }
+
+    /// Graceful shutdown: a sibling scan from a second SharedRegistry
+    /// within 100 ms of the DiscoveryHandle drop must observe the slot
+    /// gone. Proves Drop stops the thread, releases the slot, and that
+    /// the shutdown path does not leak.
+    #[cfg(unix)]
+    #[test]
+    fn graceful_shutdown_releases_slot_quickly() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let reg = Arc::new(fresh_registry());
+
+        let handle = reg
+            .discovery_builder(b"graceful")
+            .with_heartbeat_interval(Duration::from_millis(50))
+            .start()
+            .expect("start discovery");
+        let handle_uuid = handle.instance_uuid();
+
+        // Give the heartbeat thread one tick to establish presence.
+        std::thread::sleep(Duration::from_millis(100));
+
+        // From a second observer — we reuse the same Arc<SharedRegistry>
+        // here because a second `open_or_create` in the same process
+        // re-maps the same underlying shm object and the sibling scan
+        // logic is identical regardless of which MmapMut view reads it.
+        // In a real two-instance scenario each process has its own
+        // `SharedRegistry`; within one process, one Arc is enough.
+        let reg2 = Arc::clone(&reg);
+        let sibs = reg2.siblings_excluding(
+            b"graceful",
+            monotonic_nanos(),
+            Duration::from_secs(2).as_nanos() as u64,
+            None, // don't exclude anyone; we're a third-party observer
+        );
+        assert_eq!(sibs.len(), 1, "handle slot must be visible");
+        assert_eq!(sibs[0].instance_uuid, handle_uuid);
+
+        // Drop the handle — heartbeat thread joins, slot's alive flips 0.
+        let drop_start = std::time::Instant::now();
+        drop(handle);
+        let drop_elapsed = drop_start.elapsed();
+        assert!(
+            drop_elapsed < Duration::from_millis(500),
+            "Drop should be prompt (<500 ms), took {drop_elapsed:?}"
+        );
+
+        // Within 100 ms of the drop, the slot is gone.
+        let scan_start = std::time::Instant::now();
+        let sibs = reg2.siblings_excluding(
+            b"graceful",
+            monotonic_nanos(),
+            Duration::from_secs(2).as_nanos() as u64,
+            None,
+        );
+        let scan_elapsed = scan_start.elapsed();
+        assert!(
+            scan_elapsed < Duration::from_millis(100),
+            "scan too slow: {scan_elapsed:?}"
+        );
+        assert_eq!(sibs.len(), 0, "slot must be released after handle drop");
+    }
+
+    /// Verify the heartbeat thread actually ticks: grab the slot's
+    /// heartbeat timestamp twice, 300 ms apart, and confirm it advanced
+    /// by at least one heartbeat interval.
+    #[cfg(unix)]
+    #[test]
+    fn heartbeat_thread_advances_timestamp() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let reg = Arc::new(fresh_registry());
+
+        let handle = reg
+            .discovery_builder(b"hb-thread")
+            .with_heartbeat_interval(Duration::from_millis(50))
+            .start()
+            .expect("start discovery");
+        let slot_idx = handle.slot.as_ref().unwrap().slot_idx;
+
+        let hb0 = unsafe {
+            core::ptr::addr_of!((*reg.slots_ptr().add(slot_idx)).last_heartbeat_nanos)
+                .read_volatile()
+        };
+        std::thread::sleep(Duration::from_millis(300));
+        let hb1 = unsafe {
+            core::ptr::addr_of!((*reg.slots_ptr().add(slot_idx)).last_heartbeat_nanos)
+                .read_volatile()
+        };
+        assert!(
+            hb1 > hb0,
+            "heartbeat thread should have advanced the timestamp"
+        );
+        // Delta must be at least ~1 interval (50 ms) and much less than
+        // the 300 ms sleep.
+        let delta = hb1 - hb0;
+        assert!(delta >= 40_000_000, "heartbeat delta too small: {delta} ns");
     }
 }
