@@ -361,6 +361,19 @@ impl Drop for ClapGuest {
     }
 }
 
+/// Shim over the inherent `get_state` / `set_state` methods so the rack can
+/// drive state round-trips uniformly across CLAP and VST3 guests
+/// (see `rack_core::GuestStateSource`). Issue #11.
+impl rack_core::GuestStateSource for ClapGuest {
+    fn get_state(&mut self) -> anyhow::Result<Vec<u8>> {
+        ClapGuest::get_state(self)
+    }
+
+    fn set_state(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        ClapGuest::set_state(self, bytes)
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

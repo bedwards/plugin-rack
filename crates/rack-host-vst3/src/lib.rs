@@ -665,6 +665,23 @@ impl Drop for Vst3Guest {
     }
 }
 
+/// Shim over the inherent `get_state` / `set_state` methods so the rack can
+/// drive state round-trips uniformly across CLAP and VST3 guests
+/// (see `rack_core::GuestStateSource`). Issue #11.
+///
+/// Note: this covers `IComponent` (processor) state only. The edit controller
+/// state (`IEditController::getState`) is stored in a separate `controller_state`
+/// field on `StripState`; a follow-up issue will wire that side through.
+impl rack_core::GuestStateSource for Vst3Guest {
+    fn get_state(&mut self) -> anyhow::Result<Vec<u8>> {
+        Vst3Guest::get_state(self)
+    }
+
+    fn set_state(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        Vst3Guest::set_state(self, bytes)
+    }
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 /// Enumerate factory classes and return the TUID of the first
