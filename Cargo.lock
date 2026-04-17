@@ -1743,36 +1743,33 @@ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
 name = "rack-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
+ "anyhow",
  "atomic_float",
  "crossbeam",
  "log",
  "parking_lot",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "rack-gui"
-version = "0.3.0"
+version = "0.2.0"
 dependencies = [
- "anyhow",
  "crossbeam",
  "egui",
  "log",
  "nih_plug",
  "nih_plug_egui",
- "objc2 0.5.2",
- "objc2-app-kit",
- "objc2-foundation 0.2.2",
  "rack-core",
- "rack-host-vst3",
  "serde",
- "vst3",
 ]
 
 [[package]]
 name = "rack-host-clap"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clack-extensions",
@@ -1788,8 +1785,6 @@ dependencies = [
  "anyhow",
  "libloading",
  "log",
- "objc2 0.5.2",
- "objc2-app-kit",
  "rack-core",
  "vst3",
 ]
@@ -1805,7 +1800,7 @@ dependencies = [
 
 [[package]]
 name = "rack-plugin"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "crossbeam",
  "nih_plug",

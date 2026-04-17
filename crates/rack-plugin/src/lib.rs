@@ -8,6 +8,7 @@ use crossbeam::atomic::AtomicCell;
 use nih_plug::prelude::*;
 use nih_plug_egui::EguiState;
 use parking_lot::Mutex;
+use rack_core::StripState;
 use rack_gui::{LayoutMode, create_editor, default_editor_state};
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -48,6 +49,10 @@ impl Default for MacroParams {
 ///   DAW save/load.
 /// * `editor_state`: persisted window size and user scale factor.
 /// * `layout_mode`: persisted layout mode (Row/Column/Wrap).
+/// * `strip_order`: persisted list of guest strip state (issue #11). Each
+///   `StripState` carries the guest bundle path, a format tag, opaque state
+///   bytes, and macro-binding map. Serialised to JSON via nih_plug's Persist
+///   hook so DAW save/reopen restores the rack byte-for-byte.
 ///
 /// `Arc<AtomicCell<LayoutMode>>` satisfies `PersistentField<'_, LayoutMode>`
 /// via the blanket impl in `nih_plug::params::persist` (crossbeam AtomicCell
@@ -72,6 +77,15 @@ struct PluginRackParams {
     /// + Deserialize + Copy).
     #[persist = "layout_mode"]
     pub layout_mode: Arc<AtomicCell<LayoutMode>>,
+
+    /// Persisted guest-strip state — one entry per nested plugin (issue #11).
+    ///
+    /// Defaults to empty; guest strip loading is out of scope for #11 (lands
+    /// in a subsequent issue). The schema + round-trip fidelity are in place
+    /// now so DAW sessions that save rack+guest state survive a reopen
+    /// exactly.
+    #[persist = "strips"]
+    pub strip_order: Arc<Mutex<Vec<StripState>>>,
 }
 
 impl Default for PluginRackParams {
@@ -85,6 +99,7 @@ impl Default for PluginRackParams {
             )),
             editor_state: default_editor_state(),
             layout_mode: Arc::new(AtomicCell::new(LayoutMode::default())),
+            strip_order: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -207,5 +222,11 @@ mod tests {
     fn layout_mode_default_in_params() {
         let params = PluginRackParams::default();
         assert_eq!(params.layout_mode.load(), LayoutMode::Row);
+    }
+
+    #[test]
+    fn strip_order_default_empty() {
+        let params = PluginRackParams::default();
+        assert!(params.strip_order.lock().is_empty());
     }
 }
