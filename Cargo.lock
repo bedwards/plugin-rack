@@ -1765,7 +1765,7 @@ dependencies = [
 
 [[package]]
 name = "rack-gui"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "crossbeam",
@@ -1776,6 +1776,7 @@ dependencies = [
  "objc2 0.5.2",
  "objc2-app-kit",
  "objc2-foundation 0.2.2",
+ "parking_lot",
  "rack-core",
  "rack-host-vst3",
  "serde",
@@ -1820,9 +1821,10 @@ dependencies = [
 
 [[package]]
 name = "rack-plugin"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "crossbeam",
+ "egui",
  "nih_plug",
  "nih_plug_egui",
  "parking_lot",
