@@ -12,6 +12,24 @@
 /// host crate.
 pub const MACRO_SLOTS: usize = 128;
 
+/// Per-slot runtime state (audio thread holds values; GUI thread may read).
+#[derive(Clone, Debug)]
+pub struct MacroSlot {
+    /// Normalized value in 0.0..=1.0.
+    pub value: f32,
+    /// User-editable label; default is "Macro N" (1-indexed).
+    pub name: String,
+}
+
+impl MacroSlot {
+    pub fn default_for(index: usize) -> Self {
+        Self {
+            value: 0.0,
+            name: format!("Macro {}", index + 1),
+        }
+    }
+}
+
 /// A placeholder for the rack's audio-thread state. Will grow as hosting
 /// lands (rack-host-clap, rack-host-vst3).
 #[derive(Default)]
@@ -35,5 +53,16 @@ mod tests {
     #[test]
     fn rack_state_constructs() {
         let _ = RackState::new();
+    }
+
+    #[test]
+    fn macro_slot_default_name() {
+        assert_eq!(MacroSlot::default_for(0).name, "Macro 1");
+        assert_eq!(MacroSlot::default_for(127).name, "Macro 128");
+    }
+
+    #[test]
+    fn macro_slot_default_value() {
+        assert_eq!(MacroSlot::default_for(0).value, 0.0);
     }
 }

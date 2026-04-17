@@ -489,7 +489,7 @@ dependencies = [
 
 [[package]]
 name = "rack-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "atomic_float",
  "crossbeam",
@@ -536,7 +536,7 @@ dependencies = [
 
 [[package]]
 name = "rack-plugin"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "nih_plug",
  "parking_lot",
@@ -545,6 +545,7 @@ dependencies = [
  "rack-host-clap",
  "rack-host-vst3",
  "rack-ipc",
+ "serde",
 ]
 
 [[package]]
