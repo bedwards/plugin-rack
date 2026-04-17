@@ -21,5 +21,6 @@ objc2-app-kit.workspace = true
 
 [lints.clippy]
 # VST3 enum DefaultEnumType is c_uint on macOS but c_int (i32) on Windows;
-# `as i32` is required for macOS but triggers useless_conversion on Windows.
+# `as i32` is required for macOS but triggers useless_conversion / unnecessary_cast on Windows.
 useless_conversion = "allow"
+unnecessary_cast = "allow"
