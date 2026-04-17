@@ -1,6 +1,6 @@
 [package]
 name = "rack-gui"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,6 +13,13 @@ nih_plug.workspace = true
 nih_plug_egui.workspace = true
 egui.workspace = true
 rack-core.workspace = true
+rack-host-vst3.workspace = true
 log.workspace = true
 serde.workspace = true
 crossbeam.workspace = true
+anyhow.workspace = true
+vst3 = "0.3"
+# NSView requires NSResponder feature. NSThread enables MainThreadMarker::new().
+objc2 = "0.5"
+objc2-app-kit = { version = "0.2", features = ["NSView", "NSResponder"] }
+objc2-foundation = { version = "0.2", features = ["NSThread"] }

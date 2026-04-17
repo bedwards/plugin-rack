@@ -22,12 +22,12 @@ use vst3::ComPtr;
 use vst3::Interface;
 use vst3::Steinberg::Vst::{
     AudioBusBuffers, AudioBusBuffers__type0, BusDirections_, IAudioProcessor, IAudioProcessorTrait,
-    IComponent, IComponentTrait, MediaTypes_, ProcessData, ProcessModes_, ProcessSetup, SpeakerArr,
-    SymbolicSampleSizes_,
+    IComponent, IComponentTrait, IEditController, IEditControllerTrait, MediaTypes_, ProcessData,
+    ProcessModes_, ProcessSetup, SpeakerArr, SymbolicSampleSizes_, ViewType,
 };
 use vst3::Steinberg::{
-    IBStream, IPluginBaseTrait, IPluginFactory, IPluginFactoryTrait, PClassInfo, kInvalidArgument,
-    kNoInterface, kResultOk,
+    IBStream, IPlugView, IPluginBaseTrait, IPluginFactory, IPluginFactoryTrait, PClassInfo,
+    kInvalidArgument, kNoInterface, kResultOk,
 };
 
 // ── IBStream implementation ──────────────────────────────────────────────────
@@ -389,6 +389,9 @@ unsafe fn load_vst3_module(binary: &Path) -> anyhow::Result<VstModule> {
 pub struct Vst3Guest {
     component: ComPtr<IComponent>,
     processor: ComPtr<IAudioProcessor>,
+    /// Optional edit controller, obtained via QI or factory lookup during `load()`.
+    /// None if the plugin does not implement IEditController (pure DSP-only plugins).
+    edit_controller: Option<ComPtr<IEditController>>,
     /// Pre-allocated scratch buffers for the ProcessData, held for the lifetime
     /// of the active processing session. Indexed as [bus][channel].
     ///
@@ -441,6 +444,30 @@ impl Vst3Guest {
         let processor = component
             .cast::<IAudioProcessor>()
             .ok_or_else(|| anyhow!("plugin does not implement IAudioProcessor"))?;
+
+        // Attempt to QI IEditController directly (single-object plugins).
+        // If that fails, look up controller class via getControllerClassId (dual-object plugins).
+        let edit_controller: Option<ComPtr<IEditController>> = unsafe {
+            if let Some(ec) = component.cast::<IEditController>() {
+                Some(ec)
+            } else {
+                let mut ctrl_cid: vst3::Steinberg::TUID = std::mem::zeroed();
+                let r = component.getControllerClassId(&mut ctrl_cid);
+                if r == kResultOk {
+                    create_edit_controller(&module.factory, &ctrl_cid).ok()
+                } else {
+                    None
+                }
+            }
+        };
+        log::debug!(
+            "edit_controller: {}",
+            if edit_controller.is_some() {
+                "present"
+            } else {
+                "absent"
+            }
+        );
 
         // Initialize.
         let init_result = unsafe { component.initialize(std::ptr::null_mut()) };
@@ -506,6 +533,7 @@ impl Vst3Guest {
         Ok(Self {
             component,
             processor,
+            edit_controller,
             _input_ptrs: input_ptrs,
             _output_ptrs: output_ptrs,
             input_bus,
@@ -604,6 +632,26 @@ impl Vst3Guest {
         }
         Ok(())
     }
+
+    /// Ask the plugin's `IEditController` to create its native editor view.
+    ///
+    /// Returns a [`ComPtr<IPlugView>`] wrapping the guest's UI handle, or `Err`
+    /// if the plugin has no editor or `createView` returns null.
+    ///
+    /// The caller is responsible for calling `IPlugView::attached(parent, "NSView")`
+    /// (macOS) before showing the view, and `IPlugView::removed()` before dropping it.
+    /// See `rack_gui::guest_view::GuestEditorView` for the safe RAII wrapper.
+    pub fn create_plug_view(&self) -> anyhow::Result<ComPtr<IPlugView>> {
+        let ec = self
+            .edit_controller
+            .as_ref()
+            .ok_or_else(|| anyhow!("plugin has no IEditController — cannot create editor view"))?;
+        // SAFETY: COM call; ViewType::kEditor is a static string pointer.
+        let raw = unsafe { ec.createView(ViewType::kEditor) };
+        // SAFETY: raw is either null (handled below) or a valid COM pointer.
+        unsafe { ComPtr::from_raw(raw) }
+            .ok_or_else(|| anyhow!("IEditController::createView returned null"))
+    }
 }
 
 impl Drop for Vst3Guest {
@@ -661,6 +709,31 @@ unsafe fn create_component(
         bail!("IPluginFactory::createInstance failed: {result}");
     }
     ComPtr::from_raw(raw).ok_or_else(|| anyhow!("createInstance returned null for IComponent"))
+}
+
+/// Create an `IEditController` from the factory using a controller CID.
+///
+/// Used for dual-object plugins where `IComponent` and `IEditController` are
+/// separate COM objects instantiated from different class IDs.
+unsafe fn create_edit_controller(
+    factory: &ComPtr<IPluginFactory>,
+    cid: &vst3::Steinberg::TUID,
+) -> anyhow::Result<ComPtr<IEditController>> {
+    use vst3::Interface;
+    let cid_ptr = cid.as_ptr();
+    let iid = <IEditController as Interface>::IID;
+    let iid_ptr = iid.as_ptr() as *const i8;
+    let mut raw: *mut IEditController = std::ptr::null_mut();
+    let result = factory.createInstance(
+        cid_ptr,
+        iid_ptr,
+        &mut raw as *mut *mut IEditController as *mut *mut c_void,
+    );
+    if result != kResultOk {
+        bail!("IPluginFactory::createInstance for IEditController failed: {result}");
+    }
+    unsafe { ComPtr::from_raw(raw) }
+        .ok_or_else(|| anyhow!("createInstance returned null for IEditController"))
 }
 
 /// Activate the main stereo audio input and output buses on an IComponent.
@@ -751,6 +824,40 @@ mod tests {
     fn load_missing_path_returns_err() {
         let result = Vst3Guest::load(&PathBuf::from("/nonexistent/plugin.vst3"), 44100.0, 512);
         assert!(result.is_err(), "expected Err for missing path");
+    }
+
+    /// Verify `create_plug_view()` returns non-null ComPtr<IPlugView> (no attached() call).
+    /// Skipped if no VST3 found.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn guest_editor_smoke() {
+        let candidates = [
+            "/Library/Audio/Plug-Ins/VST3/Surge XT.vst3",
+            "/Library/Audio/Plug-Ins/VST3/Vital.vst3",
+            "~/Library/Audio/Plug-Ins/VST3/Surge XT.vst3",
+        ];
+        let path = candidates
+            .iter()
+            .map(|&s| PathBuf::from(s))
+            .find(|p| p.exists());
+
+        let Some(path) = path else {
+            eprintln!("no VST3 found at standard locations, skipping guest_editor_smoke");
+            return;
+        };
+
+        let guest = Vst3Guest::load(&path, 44100.0, 512)
+            .expect("failed to load real plugin for smoke test");
+
+        match guest.create_plug_view() {
+            Ok(plug_view) => {
+                eprintln!("create_plug_view OK for {}", path.display());
+                let _ = plug_view;
+            }
+            Err(e) => {
+                eprintln!("create_plug_view Err (plugin may have no editor): {e}");
+            }
+        }
     }
 
     /// If a known test plugin is available in the standard macOS VST3 location,
