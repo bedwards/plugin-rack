@@ -64,9 +64,11 @@ def _find_clap_validator() -> str | None:
 
 @verify.command(name="pluginval", help="Tier 4a: run Tracktion pluginval on the VST3 bundle (strictness 10).")
 @click.option("--strictness", default=10, type=int)
-@click.option("--format", "fmt", default="vst3", type=click.Choice(["vst3", "clap"]))
 @click.argument("wrapper_args", nargs=-1, type=click.UNPROCESSED)
-def pluginval_(strictness: int, fmt: str, wrapper_args: tuple[str, ...]) -> None:
+def pluginval_(strictness: int, wrapper_args: tuple[str, ...]) -> None:
+    # pluginval is VST3-only (JUCE-based; no CLAP support). CLAP validation
+    # lives in `pluginrack verify clap-validator`. No `--format` option
+    # here because offering `clap` would always fail.
     pv = _find_pluginval()
     if not pv:
         raise click.ClickException(
@@ -74,7 +76,7 @@ def pluginval_(strictness: int, fmt: str, wrapper_args: tuple[str, ...]) -> None
             "https://github.com/Tracktion/pluginval/releases/latest into ./tools/ "
             "or put it on PATH."
         )
-    bundled = Path(f"target/bundled/rack-plugin.{fmt}")
+    bundled = Path("target/bundled/rack-plugin.vst3")
     if not bundled.exists():
         raise click.ClickException(f"bundle not found: {bundled} (run pluginrack verify bundle first)")
     logs = Path("pluginval-logs")
