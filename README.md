@@ -23,6 +23,10 @@ cargo xtask bundle rack-plugin --release
 
 Output in `target/bundled/`.
 
+## Verifying
+
+`pluginrack verify` runs fmt, clippy, tests, bundle, then two validators: `pluginval` on the VST3 bundle and `clap-validator` (free-audio/clap-validator) on the CLAP bundle. pluginval is VST3-only; clap-validator fills the CLAP side.
+
 ## License
 
 TBD.
