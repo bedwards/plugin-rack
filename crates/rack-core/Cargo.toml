@@ -1,6 +1,6 @@
 [package]
 name = "rack-core"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,3 +13,8 @@ atomic_float.workspace = true
 crossbeam.workspace = true
 parking_lot.workspace = true
 log.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
