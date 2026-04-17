@@ -9,8 +9,11 @@
 //! consistent with the fork's design. Vizia migration can follow when a vizia
 //! adapter compatible with the BillyDM fork is available.
 
-// guest_view uses unsafe NSView / COM calls; the module documents each invariant.
-#![allow(unsafe_op_in_unsafe_fn)]
+// guest_view uses unsafe NSView / COM calls; the module documents each
+// invariant and wraps every unsafe operation in an explicit `unsafe {}`
+// block even inside `unsafe fn`, so the Rust 2024 default-deny lint is
+// restored here (issue #26).
+#![forbid(unsafe_op_in_unsafe_fn)]
 
 pub mod guest_view;
 
