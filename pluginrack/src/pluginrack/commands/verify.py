@@ -131,6 +131,25 @@ def render() -> None:
     run(["uv", "run", "--extra", "verify", "python", "scripts/verify_render.py"])
 
 
+@verify.command(
+    name="bitwig-mod",
+    help=(
+        "Tier 5c: offline Bitwig-style verification — renders the VST3 at block sizes "
+        "{64, 511, 1024} and ramps a sample of macro params (0, 63, 127) to prove the "
+        "plugin handles variable block sizes and exposes modulatable parameters. "
+        "Requires the `verify` optional-deps group (dawdreamer + numpy)."
+    ),
+)
+def bitwig_mod() -> None:
+    # Lazy import: keeps `pluginrack --help` working even when the `verify`
+    # extras group (dawdreamer) is not installed on this interpreter.
+    from pluginrack.commands.verify_bitwig_mod import run as run_bitwig_mod
+
+    rc = run_bitwig_mod(verbose=True)
+    if rc != 0:
+        raise click.ClickException(f"bitwig-mod verify failed (rc={rc})")
+
+
 @verify.command(help="Tier 6: RT-safety — run the process path under assert_no_alloc.")
 def rt_safety() -> None:
     run(["cargo", "test", "--workspace", "--features", "assert_process_allocs"])

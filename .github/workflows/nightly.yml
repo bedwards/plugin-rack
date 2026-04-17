@@ -41,3 +41,34 @@ jobs:
         with:
           name: nightly-bundled-universal
           path: target/bundled/
+
+  verify-bitwig-mod:
+    # Tier 5c: offline Bitwig-style verification via DawDreamer.
+    # macOS-only for now — DawDreamer wheels are most reliable on
+    # macOS + Linux; Windows wheels are spotty. We build + render on
+    # macos-15 (Apple Silicon) here. Bundled output is *not* universal
+    # for this job — arm64 arm-slice is enough for DawDreamer to load.
+    name: bitwig-mod (variable block + macro ramp)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.0"
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v7
+      - name: bundle release (arm64 host slice)
+        run: cargo xtask bundle rack-plugin --release
+      - name: pluginrack verify bitwig-mod
+        # `uv sync --extra verify` installs dawdreamer + numpy; skip the
+        # dev group so nightly stays lean. The subcommand itself late-
+        # imports dawdreamer so --help works without the extras.
+        #
+        # Python is pinned to 3.12 here because DawDreamer's PyPI wheels
+        # at v0.8.x are cp311 / cp312 only — cp313 is not yet published.
+        # When DawDreamer publishes 3.13 wheels, drop the `--python 3.12`
+        # flag and let uv pick the default.
+        working-directory: pluginrack
+        run: |
+          uv sync --python 3.12 --extra verify
+          uv run --python 3.12 pluginrack verify bitwig-mod
