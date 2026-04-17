@@ -493,7 +493,7 @@ impl SlotHandle {
     }
 
     /// 0-based slot index within the registry table. Test-only.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn slot_idx(&self) -> usize {
         self.slot_idx
     }
@@ -574,11 +574,22 @@ pub fn fresh_link_tag() -> String {
 ///
 /// Uses a small PRNG seeded from the OS + PID + time.
 fn fresh_uuid() -> [u8; UUID_LEN] {
-    // Mix PID, monotonic time, and address-of-local to get per-call entropy.
+    // Mix PID, monotonic time, address-of-local, and a global per-call
+    // counter. The counter is essential: two consecutive calls in the
+    // same function (same stack layout -> same local addr) on a machine
+    // where `monotonic_nanos()` returns identical values within the same
+    // clock tick would otherwise collide. Observed on Apple Silicon —
+    // clock_gettime resolution is high enough that two fresh_uuid() calls
+    // bracketing a handful of atomics can hit the same tv_nsec.
+    use std::sync::atomic::AtomicU64;
+    static CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = CALL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
     let pid = std::process::id() as u64;
     let now = monotonic_nanos();
     let local: u64 = &pid as *const _ as usize as u64;
-    let mut s = pid ^ now.rotate_left(13) ^ local.rotate_left(29);
+    let mut s =
+        pid ^ now.rotate_left(13) ^ local.rotate_left(29) ^ seq.wrapping_mul(0x9E3779B97F4A7C15);
     let mut out = [0u8; UUID_LEN];
     for chunk in out.chunks_exact_mut(8) {
         // SplitMix64 — compact, good enough for identity, no deps.
@@ -657,19 +668,37 @@ mod tests {
 
     // Tests share a single OS-wide segment, so we serialize them with a
     // mutex to avoid cross-test interference. Each test unlinks + opens
-    // fresh to start from a known state.
+    // fresh to start from a known state, then zeros the slot table to
+    // immunize against platform-specific shm recycling quirks (observed
+    // on macOS CI runners where `shm_unlink` + reopen can return a
+    // segment still populated from a prior test's slots).
     //
-    // This is slightly crude but avoids pulling in a test-only dep like
-    // `serial_test`. The set of registry tests is small.
+    // Only used on unix — Windows is a compiling stub today.
+    #[cfg(unix)]
     use std::sync::Mutex;
+    #[cfg(unix)]
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
+    #[cfg(unix)]
     fn fresh_registry() -> SharedRegistry {
-        #[cfg(unix)]
-        {
-            let _ = unlink_registry();
+        let _ = unlink_registry();
+        let reg = SharedRegistry::open_or_create().expect("open registry");
+        // Explicitly zero every slot's `alive` + heartbeat + tag so any
+        // state that survived the unlink via shm-recycling is wiped.
+        let slots = reg.slots_ptr();
+        for idx in 0..SLOT_COUNT {
+            unsafe {
+                let alive = core::ptr::addr_of_mut!((*slots.add(idx)).alive);
+                AtomicU32::from_ptr(alive).store(0, Ordering::Release);
+                core::ptr::addr_of_mut!((*slots.add(idx)).last_heartbeat_nanos).write_volatile(0);
+                core::ptr::addr_of_mut!((*slots.add(idx)).link_tag)
+                    .write_volatile([0u8; LINK_TAG_MAX]);
+                core::ptr::addr_of_mut!((*slots.add(idx)).instance_uuid)
+                    .write_volatile([0u8; UUID_LEN]);
+                core::ptr::addr_of_mut!((*slots.add(idx)).pid).write_volatile(0);
+            }
         }
-        SharedRegistry::open_or_create().expect("open registry")
+        reg
     }
 
     #[cfg(unix)]
