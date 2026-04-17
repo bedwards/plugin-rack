@@ -45,7 +45,8 @@ uv run pluginrack pr automerge
 | 3 | `verify bundle` | `cargo xtask bundle rack-plugin --release` | yes |
 | 4a | `verify pluginval` | `pluginval --strictness-level 10 --validate-in-process` on the VST3 bundle | yes |
 | 4b | `verify clap-validator` | `clap-validator validate --only-failed` on the CLAP bundle (pluginval is VST3-only) | yes |
-| 5 | `verify render` | offline render via dawdreamer | nightly |
+| 5a | `verify render` | offline render via dawdreamer | nightly |
+| 5c | `verify bitwig-mod` | offline Bitwig-style harness: renders VST3 at block sizes {64, 511, 1024} and ramps macros 0/63/127 to prove variable-block tolerance + modulatable params (dawdreamer; requires `--extra verify`) | nightly |
 | 6 | `verify rt-safety` | `cargo test --features assert_process_allocs` on audio path | nightly |
 
 Bare `pluginrack verify` runs tiers 1–4 (lint, unit, bundle, pluginval, clap-validator).
