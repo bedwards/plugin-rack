@@ -1,6 +1,6 @@
 [package]
 name = "rack-plugin"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,3 +19,4 @@ rack-gui.workspace = true
 rack-host-clap.workspace = true
 rack-host-vst3.workspace = true
 rack-ipc.workspace = true
+serde.workspace = true
