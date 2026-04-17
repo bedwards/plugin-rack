@@ -128,9 +128,25 @@ def clap_validator(only_failed: bool, wrapper_args: tuple[str, ...]) -> None:
     run(args)
 
 
-@verify.command(help="Tier 5: offline render smoke test via dawdreamer (uv sync --extra verify first).")
+@verify.command(
+    help=(
+        "Tier 5a: offline bit-identical passthrough render smoke test via "
+        "dawdreamer. Renders a deterministic 2 s 48 kHz stereo signal through "
+        "target/bundled/rack-plugin.vst3 and asserts INPUT == OUTPUT "
+        "(np.array_equal). Valid only while rack-plugin is a literal "
+        "passthrough; loosen the script's assertion when real DSP lands."
+    )
+)
 def render() -> None:
-    run(["uv", "run", "--extra", "verify", "python", "scripts/verify_render.py"])
+    # Python is pinned to 3.12 because DawDreamer's PyPI wheels at v0.7+
+    # are cp311 / cp312 only — no cp313 wheel as of 2026-04. When
+    # DawDreamer ships 3.13 wheels, drop the `--python 3.12` pin.
+    #
+    # `--script` activates the script's PEP-723 inline dependency block,
+    # so this works whether invoked from the repo root or from within a
+    # uv project. The `[verify]` extras group in pluginrack's pyproject
+    # is the belt; PEP-723 is the braces.
+    run(["uv", "run", "--python", "3.12", "--script", "scripts/verify_render.py"])
 
 
 @verify.command(

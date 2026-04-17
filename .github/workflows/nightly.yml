@@ -42,6 +42,31 @@ jobs:
           name: nightly-bundled-universal
           path: target/bundled/
 
+  verify-render:
+    # Tier 5a: offline bit-identical passthrough render.
+    # Renders a deterministic 2 s 48 kHz stereo signal through the
+    # bundled VST3 and asserts INPUT == OUTPUT (np.array_equal). Valid
+    # only while rack-plugin is a literal passthrough; when real DSP
+    # lands, the script's assertion has to loosen.
+    #
+    # macOS-only: DawDreamer wheels are most reliable on macOS. Python
+    # pinned to 3.12 because DawDreamer 0.7+ has cp311/cp312 wheels only.
+    name: verify-render (bit-identical passthrough)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.0"
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v7
+      - name: bundle release (arm64 host slice)
+        run: cargo xtask bundle rack-plugin --release
+      - name: verify_render.py — INPUT == OUTPUT, bit-identical
+        # `uv run --script` activates the script's PEP-723 inline deps
+        # (dawdreamer, numpy, soundfile) — no project sync needed.
+        run: uv run --python 3.12 --script scripts/verify_render.py
+
   verify-bitwig-mod:
     # Tier 5c: offline Bitwig-style verification via DawDreamer.
     # macOS-only for now — DawDreamer wheels are most reliable on
