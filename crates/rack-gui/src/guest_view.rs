@@ -25,21 +25,32 @@ mod macos {
     /// `attach()` creates a child NSView at the given pixel rect, calls
     /// `IPlugView::attached(child_nsview, "NSView")`, and returns `Self`.
     /// `Drop` calls `IPlugView::removed()` and removes the child NSView.
+    ///
+    /// # Thread safety
+    ///
+    /// `GuestEditorView` is intentionally `!Send` (and `!Sync`). Both `NSView`
+    /// operations and `IPlugView` UI calls are documented as main-thread-only,
+    /// and `Drop` calls `removeFromSuperview` — moving the value to a
+    /// background thread and dropping it there would be undefined behavior.
+    /// The `NonNull<NSView>` field makes the struct `!Send` automatically
+    /// (raw pointers are `!Send` by default); no unsafe `Send` impl is needed
+    /// or allowed. Construct `GuestEditorView` lazily inside the editor's
+    /// spawn / update callback, which runs on the main thread — never store
+    /// it in a `Send` parent.
     pub struct GuestEditorView {
         /// The child NSView we allocated (retained via raw pointer inside an
         /// `objc2::rc::Retained`). We hold it as a raw `NonNull<NSView>` so we
         /// can pass it across the FFI boundary without fighting lifetime rules.
+        ///
+        /// `NonNull<NSView>` is `!Send` by default; this field is what
+        /// prevents `GuestEditorView` from accidentally crossing a thread
+        /// boundary.
         ns_view: NonNull<NSView>,
         /// The guest's IPlugView. Kept alive to drive the lifecycle.
         plug_view: ComPtr<IPlugView>,
         /// Cached size in logical pixels (width, height).
         size: (u32, u32),
     }
-
-    // SAFETY: GuestEditorView is used on the main (GUI) thread only.
-    // NSView and ComPtr<IPlugView> are both documented as main-thread-only for
-    // UI operations; the caller must ensure single-thread access.
-    unsafe impl Send for GuestEditorView {}
 
     impl GuestEditorView {
         /// Embed a guest plugin editor inside `parent_ns_view`.
@@ -186,10 +197,39 @@ mod macos {
 
     impl Drop for GuestEditorView {
         fn drop(&mut self) {
-            // SAFETY: Drop is called on whichever thread owns the value.
-            // Callers must ensure GuestEditorView is dropped on the main thread.
+            // SAFETY: `GuestEditorView` is `!Send` (the `NonNull<NSView>`
+            // field prevents cross-thread moves). Therefore `drop` runs on
+            // whichever thread created it — which, by the contract on
+            // `attach()`, is the main thread. `removeFromSuperview` and
+            // `IPlugView::removed()` are main-thread-only; this is safe.
             unsafe { self.detach() };
         }
+    }
+
+    // ── Compile-time thread-safety assertion ──────────────────────────────
+    //
+    // `GuestEditorView` must stay `!Send` so a background thread can never
+    // drop it and invoke `removeFromSuperview` off the main thread. The
+    // trick below fails to compile if someone re-introduces an
+    // `unsafe impl Send` (directly or by replacing the `!Send` field).
+    //
+    // How it works: `AmbiguousIfSend<A>` has two blanket impls — one for
+    // `A = ()` that applies to every type, and one for `A = u8` that only
+    // applies when `T: Send`. If `GuestEditorView: Send`, both impls cover
+    // the call and `_` inference is ambiguous — a hard compile error. If
+    // `GuestEditorView` is `!Send`, only the `()` impl applies and `_`
+    // resolves to `()` unambiguously.
+    #[allow(dead_code)]
+    fn _assert_guest_editor_view_is_not_send() {
+        trait AmbiguousIfSend<A> {
+            fn some_item() {}
+        }
+        impl<T: ?Sized> AmbiguousIfSend<()> for T {}
+        impl<T: ?Sized + Send> AmbiguousIfSend<u8> for T {}
+
+        // If this line ever fails to compile with "multiple applicable items",
+        // `GuestEditorView` has become `Send` — that is a regression bug.
+        <GuestEditorView as AmbiguousIfSend<_>>::some_item();
     }
 }
 
@@ -198,9 +238,14 @@ pub use macos::GuestEditorView;
 
 /// Stub for non-macOS platforms. Actual NSView embedding is macOS-only in this PR.
 /// Windows (HWND) and Linux (X11 reparent) will be added in future issues.
+///
+/// Kept `!Send` (via a `PhantomData<*mut ()>` marker) so consumers get the
+/// same threading contract on every platform — accidental cross-thread moves
+/// fail to compile on Linux / Windows, matching the macOS behavior.
 #[cfg(not(target_os = "macos"))]
 pub struct GuestEditorView {
     _priv: (),
+    _not_send: std::marker::PhantomData<*mut ()>,
 }
 
 #[cfg(not(target_os = "macos"))]
