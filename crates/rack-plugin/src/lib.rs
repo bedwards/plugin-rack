@@ -91,6 +91,31 @@ struct PluginRackParams {
     /// in a subsequent issue). The schema + round-trip fidelity are in place
     /// now so DAW sessions that save rack+guest state survive a reopen
     /// exactly.
+    ///
+    /// # Audio-path contract (issue #29)
+    ///
+    /// This field is GUI + save/load ONLY and MUST NEVER be `.lock()`-ed
+    /// from `process()` or any other audio-thread callback. Holding a
+    /// `parking_lot::Mutex` on the audio thread can block for an unbounded
+    /// time if the GUI thread is mid-write, which would drop the DAW's
+    /// realtime deadline and produce xruns.
+    ///
+    /// The audio path must instead consume a lock-free snapshot produced by
+    /// the (future) `rack-ipc` snapshot consumer: the GUI/save path builds
+    /// an immutable `Arc<[StripState]>` and swaps it into an
+    /// `arc_swap`/`rtrb` channel that `process()` reads without locking.
+    /// Until that snapshot path lands, `process()` is pure passthrough and
+    /// does not look at strip state at all.
+    ///
+    /// A `NoAudioLock<T>` debug-only newtype that panics on `.lock()` from
+    /// a thread named `"audio"` was considered as a regression guard; it
+    /// was deferred because nih_plug does not label the audio thread and a
+    /// reliable detector needs host cooperation. Revisit when strip
+    /// scheduling lands.
+    ///
+    /// The `#[persist = "strips"]` attribute name is load-bearing — it is
+    /// the key nih_plug writes into the DAW session blob. Changing it
+    /// breaks every saved project. Do not rename.
     #[persist = "strips"]
     pub strip_order: Arc<Mutex<Vec<StripState>>>,
 
