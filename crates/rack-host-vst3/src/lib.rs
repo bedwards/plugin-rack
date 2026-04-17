@@ -14,17 +14,17 @@
 use std::ffi::c_void;
 use std::path::Path;
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use vst3::ComPtr;
 use vst3::Interface;
 use vst3::Steinberg::Vst::{
-    AudioBusBuffers, AudioBusBuffers__type0, BusDirections_, IAudioProcessor,
-    IAudioProcessorTrait, IComponent, IComponentTrait, MediaTypes_, ProcessData, ProcessModes_,
-    ProcessSetup, SpeakerArr, SymbolicSampleSizes_,
+    AudioBusBuffers, AudioBusBuffers__type0, BusDirections_, IAudioProcessor, IAudioProcessorTrait,
+    IComponent, IComponentTrait, MediaTypes_, ProcessData, ProcessModes_, ProcessSetup, SpeakerArr,
+    SymbolicSampleSizes_,
 };
 use vst3::Steinberg::{
-    IBStream, IPluginBaseTrait, IPluginFactory, IPluginFactoryTrait, PClassInfo,
-    kInvalidArgument, kNoInterface, kResultOk,
+    IBStream, IPluginBaseTrait, IPluginFactory, IPluginFactoryTrait, PClassInfo, kInvalidArgument,
+    kNoInterface, kResultOk,
 };
 
 // ── IBStream implementation ──────────────────────────────────────────────────
@@ -208,10 +208,7 @@ fn resolve_module_binary(bundle: &Path) -> anyhow::Result<std::path::PathBuf> {
         if p.exists() {
             return Ok(p);
         }
-        bail!(
-            "macOS binary not found at expected path: {}",
-            p.display()
-        );
+        bail!("macOS binary not found at expected path: {}", p.display());
     }
     #[cfg(target_os = "windows")]
     {
@@ -365,8 +362,7 @@ unsafe fn load_vst3_module(binary: &Path) -> anyhow::Result<VstModule> {
         .get(b"GetPluginFactory\0")
         .context("GetPluginFactory symbol not found")?;
     let raw = get_factory();
-    let factory = ComPtr::from_raw(raw)
-        .ok_or_else(|| anyhow!("GetPluginFactory returned null"))?;
+    let factory = ComPtr::from_raw(raw).ok_or_else(|| anyhow!("GetPluginFactory returned null"))?;
 
     Ok(VstModule {
         factory,
@@ -454,14 +450,7 @@ impl Vst3Guest {
 
         // Set bus arrangements (stereo in, stereo out).
         let mut stereo = SpeakerArr::kStereo;
-        let arr_result = unsafe {
-            processor.setBusArrangements(
-                &mut stereo,
-                1,
-                &mut stereo,
-                1,
-            )
-        };
+        let arr_result = unsafe { processor.setBusArrangements(&mut stereo, 1, &mut stereo, 1) };
         if arr_result != kResultOk {
             log::warn!("setBusArrangements returned {arr_result} (non-fatal, continuing)");
         }
@@ -638,8 +627,7 @@ unsafe fn find_audio_processor_cid(
             continue;
         }
         // category is a null-terminated ASCII string: "Audio Module Class"
-        let cat = std::ffi::CStr::from_ptr(info.category.as_ptr())
-            .to_string_lossy();
+        let cat = std::ffi::CStr::from_ptr(info.category.as_ptr()).to_string_lossy();
         log::debug!("class {i}: category=\"{cat}\"");
         if cat == "Audio Module Class" {
             return Ok(info.cid);
@@ -753,11 +741,7 @@ mod tests {
     /// Loading a non-existent path must return Err gracefully — no panic.
     #[test]
     fn load_missing_path_returns_err() {
-        let result = Vst3Guest::load(
-            &PathBuf::from("/nonexistent/plugin.vst3"),
-            44100.0,
-            512,
-        );
+        let result = Vst3Guest::load(&PathBuf::from("/nonexistent/plugin.vst3"), 44100.0, 512);
         assert!(result.is_err(), "expected Err for missing path");
     }
 
@@ -783,8 +767,7 @@ mod tests {
             return;
         };
 
-        let mut guest = Vst3Guest::load(&path, 44100.0, 512)
-            .expect("failed to load real plugin");
+        let mut guest = Vst3Guest::load(&path, 44100.0, 512).expect("failed to load real plugin");
 
         // State round-trip.
         let state = guest.get_state().expect("getState failed");
