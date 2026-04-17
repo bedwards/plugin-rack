@@ -16,10 +16,10 @@
 
 use crossbeam::atomic::AtomicCell;
 use nih_plug::prelude::*;
-use nih_plug_egui::EguiState;
+use nih_plug_egui::{EguiSettings, EguiState, create_egui_editor};
 use parking_lot::Mutex;
 use rack_core::StripState;
-use rack_gui::{LayoutMode, create_editor, default_editor_state};
+use rack_gui::{EditorUiState, LayoutMode, default_editor_state, macro_grid};
 use rack_ipc::{DiscoveryHandle, SharedRegistry};
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -214,11 +214,21 @@ impl Plugin for PluginRack {
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        // Pass the shared Arc<AtomicCell<LayoutMode>> directly to the GUI.
-        // The GUI writes to it on Mode toggle; nih_plug reads it on DAW save.
-        create_editor(
-            self.params.editor_state.clone(),
-            self.params.layout_mode.clone(),
+        // We own the editor build closure here (not in rack-gui) so we can
+        // close over the whole `Arc<PluginRackParams>`. rack-gui supplies the
+        // layout helpers (macro_grid + LayoutMode); this crate provides the
+        // param layout + toolbar + persistence glue.
+        let params = self.params.clone();
+        let egui_state = self.params.editor_state.clone();
+
+        create_egui_editor(
+            egui_state,
+            EditorUiState::default(),
+            EguiSettings::default(),
+            |_egui_ctx, _queue, _ui_state| {},
+            move |ui, setter, _queue, ui_state| {
+                build_editor(ui, setter, &params, ui_state);
+            },
         )
     }
 
@@ -279,6 +289,74 @@ impl Plugin for PluginRack {
     ) -> ProcessStatus {
         ProcessStatus::Normal
     }
+}
+
+// ---------------------------------------------------------------------------
+// Editor UI
+// ---------------------------------------------------------------------------
+
+/// Build the full rack editor UI inside the egui update closure.
+///
+/// Toolbar (top):
+/// * "plugin-rack" title
+/// * `link_tag` single-line text field (persisted via `params.link_tag`)
+/// * Mode button cycling Row / Column / Wrap (persisted via
+///   `params.layout_mode`)
+///
+/// Central panel: 128 macro sliders rendered via `rack_gui::macro_grid` in
+/// the current layout mode.
+fn build_editor(
+    ui: &mut egui::Ui,
+    setter: &ParamSetter,
+    params: &Arc<PluginRackParams>,
+    ui_state: &mut EditorUiState,
+) {
+    use egui::{Align, Layout, Panel, RichText, TextEdit};
+
+    // Sync the persistent link_tag into the scratch buffer on the first frame
+    // (and only on the first frame — subsequent frames edit the buffer and
+    // write back only on `.changed()`).
+    if !ui_state.link_tag_synced {
+        ui_state.link_tag_buf = params.link_tag.lock().clone();
+        ui_state.link_tag_synced = true;
+    }
+
+    Panel::top("rack_toolbar").show_inside(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("plugin-rack").size(16.0).strong());
+            ui.separator();
+
+            ui.label("link_tag:");
+            let resp = ui.add(
+                TextEdit::singleline(&mut ui_state.link_tag_buf)
+                    .desired_width(160.0)
+                    .hint_text("(unlinked)"),
+            );
+            if resp.changed() {
+                // Commit every keystroke; this keeps the persistent value in
+                // sync and avoids losing edits on window close. The underlying
+                // Mutex<String> is locked for a microsecond; never touched on
+                // the audio thread.
+                *params.link_tag.lock() = ui_state.link_tag_buf.clone();
+            }
+
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let current = params.layout_mode.load();
+                if ui.button(format!("Mode: {}", current.label())).clicked() {
+                    params.layout_mode.store(current.next());
+                }
+            });
+        });
+    });
+
+    egui::CentralPanel::default().show_inside(ui, |ui| {
+        // Collect borrows of the 128 FloatParams into a Vec<&FloatParam> so
+        // the layout helper can iterate them generically. This is O(128) per
+        // frame but the cost is trivial (just pointer copies).
+        let param_refs: Vec<&FloatParam> = params.macros.iter().map(|m| &m.value).collect();
+        let mode = params.layout_mode.load();
+        macro_grid(ui, setter, &param_refs, &params.macro_names, mode, ui_state);
+    });
 }
 
 impl ClapPlugin for PluginRack {
