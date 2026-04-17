@@ -129,6 +129,9 @@ impl StripState {
 /// For VST3 guests `get_state` returns only the processor (`IComponent`)
 /// state; `IEditController` state is handled by a separate call path at the
 /// host layer (see `research/vst3_spec.md` §"Two states, two streams").
+///
+/// See `research/state_api_notes.md` for API rationale (why `get_state`
+/// returns an owned `Vec<u8>` rather than filling a caller-supplied buffer).
 pub trait GuestStateSource {
     fn get_state(&mut self) -> anyhow::Result<Vec<u8>>;
     fn set_state(&mut self, bytes: &[u8]) -> anyhow::Result<()>;
