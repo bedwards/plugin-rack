@@ -1808,7 +1808,7 @@ dependencies = [
 
 [[package]]
 name = "rack-ipc"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -1820,7 +1820,7 @@ dependencies = [
 
 [[package]]
 name = "rack-plugin"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "crossbeam",
  "nih_plug",
