@@ -22,11 +22,10 @@ jobs:
           mkdir -p pluginval
           curl -L -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
           unzip -oq pluginval.zip -d pluginval
-      - name: pluginval strictness 10
+      - name: pluginval strictness 10 (VST3 only; CLAP uses clap-validator)
         run: |
           PV=./pluginval/pluginval.app/Contents/MacOS/pluginval
           $PV --strictness-level 10 --validate-in-process --validate target/bundled/rack-plugin.vst3
-          $PV --strictness-level 10 --validate-in-process --validate target/bundled/rack-plugin.clap
       - uses: actions/upload-artifact@v7
         with:
           name: nightly-bundled-universal

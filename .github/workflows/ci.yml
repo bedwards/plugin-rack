@@ -66,14 +66,9 @@ jobs:
           curl -L -o pluginval.zip "${{ matrix.pluginval_url }}"
           unzip -oq pluginval.zip -d pluginval
 
-      - name: pluginval (CLAP, strictness 5)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          extra=""
-          if [ "$RUNNER_OS" = "Linux" ]; then extra="--skip-gui-tests"; fi
-          ${{ matrix.pluginval_bin }} --strictness-level 5 --validate-in-process $extra --validate target/bundled/rack-plugin.clap
-
+      # pluginval (JUCE-based, v1.0.x) does not support CLAP.
+      # CLAP validation is tracked separately — see the
+      # "Replace CLAP validation with clap-validator" issue.
       - name: pluginval (VST3, strictness 5)
         shell: bash
         run: |
