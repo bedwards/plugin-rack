@@ -138,5 +138,5 @@ jobs:
         run: |
           uv sync --all-extras --group dev
           uv run ruff check src
-          uv run pytest -q || echo "no tests yet"
+          uv run pytest -q
           uv run pluginrack --help
