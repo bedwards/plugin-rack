@@ -29,7 +29,7 @@ jobs:
             pluginval_url: https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip
             pluginval_bin: ./pluginval/pluginval.exe
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -87,7 +87,7 @@ jobs:
     name: python / pluginrack CLI
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
       - name: sync + lint + test
         working-directory: pluginrack
