@@ -91,13 +91,25 @@ jobs:
       # are their own PR.
       - name: Install clap-validator
         shell: bash
+        # 0.3.2 release archive layouts differ per OS:
+        #   - macOS  .tar.gz: `binaries/clap-validator`  (needs --strip-components=1)
+        #   - Linux  .tar.gz: `clap-validator`           (no prefix dir)
+        #   - Windows   .zip: `clap-validator.exe`       (no prefix dir)
+        # Extract to a scratch dir, then flatten to ./clap-validator/<bin>.
         run: |
-          mkdir -p clap-validator
+          mkdir -p clap-validator clap-validator-tmp
           curl -L -o "${{ matrix.clap_validator_archive }}" "${{ matrix.clap_validator_url }}"
           case "${{ matrix.clap_validator_archive }}" in
-            *.zip) unzip -oq "${{ matrix.clap_validator_archive }}" -d clap-validator ;;
-            *.tar.gz) tar -xzf "${{ matrix.clap_validator_archive }}" -C clap-validator --strip-components=1 ;;
+            *.zip)    unzip -oq "${{ matrix.clap_validator_archive }}" -d clap-validator-tmp ;;
+            *.tar.gz) tar -xzf "${{ matrix.clap_validator_archive }}" -C clap-validator-tmp ;;
           esac
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            src=$(find clap-validator-tmp -name clap-validator.exe -type f | head -1)
+          else
+            src=$(find clap-validator-tmp -name clap-validator -type f | head -1)
+          fi
+          [ -n "$src" ] || { echo "clap-validator binary not found in archive"; find clap-validator-tmp; exit 1; }
+          cp "$src" "${{ matrix.clap_validator_bin }}"
           chmod +x "${{ matrix.clap_validator_bin }}" || true
           "${{ matrix.clap_validator_bin }}" --version
 
