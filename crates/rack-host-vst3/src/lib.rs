@@ -10,6 +10,9 @@
 // The vst3 crate exposes unsafe COM vtable calls everywhere; we wrap them in
 // safe-ish public methods and document the remaining invariants.
 #![allow(unsafe_op_in_unsafe_fn)]
+// VST3 enum variants are `i32` on Windows but other types on macOS/Linux;
+// `as i32` casts are required for cross-platform compatibility.
+#![allow(clippy::useless_conversion)]
 
 use std::ffi::c_void;
 use std::path::Path;
