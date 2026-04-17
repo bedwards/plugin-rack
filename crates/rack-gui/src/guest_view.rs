@@ -205,32 +205,6 @@ mod macos {
             unsafe { self.detach() };
         }
     }
-
-    // ── Compile-time thread-safety assertion ──────────────────────────────
-    //
-    // `GuestEditorView` must stay `!Send` so a background thread can never
-    // drop it and invoke `removeFromSuperview` off the main thread. The
-    // trick below fails to compile if someone re-introduces an
-    // `unsafe impl Send` (directly or by replacing the `!Send` field).
-    //
-    // How it works: `AmbiguousIfSend<A>` has two blanket impls — one for
-    // `A = ()` that applies to every type, and one for `A = u8` that only
-    // applies when `T: Send`. If `GuestEditorView: Send`, both impls cover
-    // the call and `_` inference is ambiguous — a hard compile error. If
-    // `GuestEditorView` is `!Send`, only the `()` impl applies and `_`
-    // resolves to `()` unambiguously.
-    #[allow(dead_code)]
-    fn _assert_guest_editor_view_is_not_send() {
-        trait AmbiguousIfSend<A> {
-            fn some_item() {}
-        }
-        impl<T: ?Sized> AmbiguousIfSend<()> for T {}
-        impl<T: ?Sized + Send> AmbiguousIfSend<u8> for T {}
-
-        // If this line ever fails to compile with "multiple applicable items",
-        // `GuestEditorView` has become `Send` — that is a regression bug.
-        <GuestEditorView as AmbiguousIfSend<_>>::some_item();
-    }
 }
 
 #[cfg(target_os = "macos")]
@@ -253,4 +227,42 @@ impl GuestEditorView {
     pub fn size(&self) -> (u32, u32) {
         (0, 0)
     }
+}
+
+// ── Compile-time thread-safety sentry ───────────────────────────────────────
+//
+// `GuestEditorView` must be `!Send` AND `!Sync` on every platform:
+//
+// * `!Send` — so a background thread can never drop it and invoke
+//   `removeFromSuperview` / `IPlugView::removed()` off the main thread.
+// * `!Sync` — so a background thread cannot reach in via a shared reference
+//   and trigger a main-thread-only NSView call either.
+//
+// The trick: `AmbiguousIf<A>` has two blanket impls — one for `A = ()` that
+// applies to every type, and one for `A = u8` that only applies when `T`
+// satisfies the target bound. If `T` satisfies the bound, both impls cover
+// the call and `_` inference is ambiguous — a hard compile error. If not,
+// only the `()` impl applies and `_` resolves unambiguously.
+//
+// Both assertions live OUTSIDE the `cfg(target_os = "macos")` gate so the
+// non-macOS stub's thread-safety contract is also verified — if the stub
+// ever regresses, Linux / Windows CI fails to build just like macOS.
+#[allow(dead_code)]
+fn _assert_guest_editor_view_is_not_send() {
+    trait AmbiguousIfSend<A> {
+        fn some_item() {}
+    }
+    impl<T: ?Sized> AmbiguousIfSend<()> for T {}
+    impl<T: ?Sized + Send> AmbiguousIfSend<u8> for T {}
+    <GuestEditorView as AmbiguousIfSend<_>>::some_item();
+}
+
+#[allow(dead_code)]
+fn _assert_guest_editor_view_is_not_sync() {
+    trait AmbiguousIfSync<A> {
+        fn some_item() {}
+    }
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+    impl<T: ?Sized + Sync> AmbiguousIfSync<u8> for T {}
+    <GuestEditorView as AmbiguousIfSync<_>>::some_item();
 }
