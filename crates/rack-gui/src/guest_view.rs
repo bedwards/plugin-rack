@@ -96,15 +96,21 @@ mod macos {
             let mtm = MainThreadMarker::new().ok_or_else(|| {
                 anyhow::anyhow!("GuestEditorView::attach must be called on the main thread")
             })?;
+            // SAFETY: `alloc` is a fresh uninitialised NSView allocation from
+            // the main-thread marker; `initWithFrame` is the standard init.
             let child: objc2::rc::Retained<NSView> = {
                 let alloc = mtm.alloc::<NSView>();
-                NSView::initWithFrame(alloc, frame)
+                unsafe { NSView::initWithFrame(alloc, frame) }
             };
 
             // Add the child NSView to the parent.
             let parent_ref = parent_ns_view as *mut NSView;
+            // SAFETY: caller guarantees `parent_ns_view` is a live NSView on the
+            // main thread (documented in the fn-level Safety section).
             let parent = unsafe { &*parent_ref };
-            parent.addSubview(&child);
+            // SAFETY: `parent` and `child` are both live NSViews on the main
+            // thread; addSubview's only precondition is main-thread ownership.
+            unsafe { parent.addSubview(&child) };
 
             // Obtain a stable raw pointer (the view is retained by the parent
             // hierarchy once addSubview is called; we also keep our Retained handle).
@@ -114,14 +120,20 @@ mod macos {
             let _ = objc2::rc::Retained::into_raw(child);
 
             // Call IPlugView::attached with the child NSView pointer.
-            let result = plug_view.attached(
-                raw_child.as_ptr() as *mut std::ffi::c_void,
-                kPlatformTypeNSView,
-            );
+            // SAFETY: caller guarantees `plug_view` is an initialised IPlugView*;
+            // `raw_child.as_ptr()` is a valid NSView allocated above.
+            let result = unsafe {
+                plug_view.attached(
+                    raw_child.as_ptr() as *mut std::ffi::c_void,
+                    kPlatformTypeNSView,
+                )
+            };
             if result != kResultOk {
                 // Remove the child view we added.
+                // SAFETY: `raw_child` is the NSView we just alloc'd + retained.
                 let child_ref = unsafe { &*raw_child.as_ptr() };
-                child_ref.removeFromSuperview();
+                // SAFETY: main-thread NSView op; we hold a live retained reference.
+                unsafe { child_ref.removeFromSuperview() };
                 // Re-own then drop to balance our into_raw above.
                 let _ = unsafe { objc2::rc::Retained::from_raw(raw_child.as_ptr()) };
                 bail!("IPlugView::attached failed: {result}");
@@ -146,12 +158,15 @@ mod macos {
         /// Must be called on the main thread.
         pub unsafe fn set_rect(&self, x: f32, y: f32, w: f32, h: f32) {
             // Resize the NSView frame.
+            // SAFETY: `self.ns_view` was populated by `attach` with a retained
+            // NSView that is still alive (we never drop it before detach).
             let child = unsafe { &*self.ns_view.as_ptr() };
             let new_frame = NSRect::new(
                 objc2_foundation::NSPoint::new(x as f64, y as f64),
                 objc2_foundation::NSSize::new(w as f64, h as f64),
             );
-            child.setFrame(new_frame);
+            // SAFETY: main-thread NSView op — caller asserts main-thread via fn Safety.
+            unsafe { child.setFrame(new_frame) };
 
             // Notify the guest plugin via IPlugView::onSize.
             let mut rect = vst3::Steinberg::ViewRect {
@@ -182,8 +197,10 @@ mod macos {
             }
 
             // Remove child NSView from parent and release our retain.
+            // SAFETY: same as in `set_rect` — retained NSView is alive until detach.
             let child = unsafe { &*self.ns_view.as_ptr() };
-            child.removeFromSuperview();
+            // SAFETY: main-thread NSView op; caller asserts main-thread via fn Safety.
+            unsafe { child.removeFromSuperview() };
             // Reconstruct Retained to balance the into_raw done in attach().
             let retained = unsafe { objc2::rc::Retained::from_raw(self.ns_view.as_ptr()) };
             drop(retained);
