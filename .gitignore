@@ -25,3 +25,6 @@ pluginval-logs/
 tools/pluginval*
 tools/validator*
 vst3sdk/
+
+# Claude Code runtime (agent worktrees, session state)
+.claude/worktrees/
