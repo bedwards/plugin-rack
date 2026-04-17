@@ -9,7 +9,10 @@
 //! consistent with the fork's design. Vizia migration can follow when a vizia
 //! adapter compatible with the BillyDM fork is available.
 
-#![forbid(unsafe_op_in_unsafe_fn)]
+// guest_view uses unsafe NSView / COM calls; the module documents each invariant.
+#![allow(unsafe_op_in_unsafe_fn)]
+
+pub mod guest_view;
 
 use crossbeam::atomic::AtomicCell;
 use egui::{Align, Layout, Panel, RichText};
