@@ -25,12 +25,20 @@ nih_plug_xtask = { git = "https://github.com/BillyDM/nih-plug.git", rev = "3e0c4
 # egui pinned to match nih_plug_egui's bundled version
 egui = { version = "0.34.1", default-features = false, features = ["bytemuck"] }
 
+# clack: CLAP hosting in Rust (pinned git SHA; no crates.io release as of 2026-04)
+clack-host = { git = "https://github.com/prokopyl/clack.git", rev = "4541f03792635dfdc6be9441a01b786e9b4ccf18", package = "clack-host" }
+clack-extensions = { git = "https://github.com/prokopyl/clack.git", rev = "4541f03792635dfdc6be9441a01b786e9b4ccf18", package = "clack-extensions", features = ["clack-host", "state"] }
+
 # In-workspace crates
 rack-core = { path = "crates/rack-core" }
 rack-host-clap = { path = "crates/rack-host-clap" }
 rack-host-vst3 = { path = "crates/rack-host-vst3" }
 rack-gui = { path = "crates/rack-gui" }
 rack-ipc = { path = "crates/rack-ipc" }
+
+# macOS NSView embedding for guest editor (issue #6)
+objc2 = "0.5"
+objc2-app-kit = { version = "0.2", features = ["NSView", "NSWindow"] }
 
 # Shared
 parking_lot = "0.12"
