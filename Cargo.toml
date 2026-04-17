@@ -20,7 +20,10 @@ repository = "https://github.com/bedwards/plugin-rack"
 [workspace.dependencies]
 # nih_plug: maintained community fork (robbert-vdh/nih-plug is unmaintained as of 2026-03-29)
 nih_plug = { git = "https://github.com/BillyDM/nih-plug.git", rev = "3e0c4ac0430bffd5526b7325b8362369986d24af", features = ["assert_process_allocs"] }
+nih_plug_egui = { git = "https://github.com/BillyDM/nih-plug.git", rev = "3e0c4ac0430bffd5526b7325b8362369986d24af" }
 nih_plug_xtask = { git = "https://github.com/BillyDM/nih-plug.git", rev = "3e0c4ac0430bffd5526b7325b8362369986d24af" }
+# egui pinned to match nih_plug_egui's bundled version
+egui = { version = "0.34.1", default-features = false, features = ["bytemuck"] }
 
 # In-workspace crates
 rack-core = { path = "crates/rack-core" }

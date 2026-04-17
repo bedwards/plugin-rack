@@ -1,13 +1,18 @@
 [package]
 name = "rack-gui"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "GUI for plugin-rack (vizia primary, iced fallback for wrap layout)"
+description = "GUI for plugin-rack (egui via nih_plug_egui)"
 
 [dependencies]
+nih_plug.workspace = true
+nih_plug_egui.workspace = true
+egui.workspace = true
 rack-core.workspace = true
 log.workspace = true
+serde.workspace = true
+crossbeam.workspace = true
