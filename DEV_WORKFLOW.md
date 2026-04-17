@@ -32,6 +32,7 @@ uv run pluginrack --help
 uv run pluginrack status
 uv run pluginrack verify
 uv run pluginrack verify pluginval --format vst3
+uv run pluginrack verify clap-validator
 uv run pluginrack pr automerge
 ```
 
@@ -42,17 +43,18 @@ uv run pluginrack pr automerge
 | 1 | `verify lint` | `cargo fmt --check` + `cargo clippy -D warnings` | yes |
 | 2 | `verify unit` | `cargo test --workspace` | yes |
 | 3 | `verify bundle` | `cargo xtask bundle rack-plugin --release` | yes |
-| 4 | `verify pluginval` | `pluginval --strictness-level 10 --validate-in-process` on CLAP + VST3 | yes |
+| 4a | `verify pluginval` | `pluginval --strictness-level 10 --validate-in-process` on the VST3 bundle | yes |
+| 4b | `verify clap-validator` | `clap-validator validate --only-failed` on the CLAP bundle (pluginval is VST3-only) | yes |
 | 5 | `verify render` | offline render via dawdreamer | nightly |
 | 6 | `verify rt-safety` | `cargo test --features assert_process_allocs` on audio path | nightly |
 
-Bare `pluginrack verify` runs tiers 1–4.
+Bare `pluginrack verify` runs tiers 1–4 (lint, unit, bundle, pluginval, clap-validator).
 
 ## CI (`.github/workflows/`)
 
-- `ci.yml` — PR / push: matrix over `macos-15`, `ubuntu-24.04`, `windows-2025`. Fmt, clippy, test, bundle, pluginval strictness 5. Plus a Python job that lints + help-tests the CLI.
+- `ci.yml` — PR / push: matrix over `macos-15`, `ubuntu-24.04`, `windows-2025`. Fmt, clippy, test, bundle, pluginval (VST3, strictness 5), clap-validator (CLAP, pinned 0.3.2, `--only-failed`). Plus a Python job that lints + help-tests the CLI.
 - `automerge.yml` — on PR ready / check_suite complete: `gh pr merge --auto --squash --delete-branch`.
-- `nightly.yml` — 07:17 UTC: bundle-universal on macOS + pluginval strictness 10.
+- `nightly.yml` — 07:17 UTC: bundle-universal on macOS + pluginval strictness 10 (VST3) + clap-validator full-suite (CLAP).
 
 Branch protection (set via `gh api`):
 ```

@@ -1,4 +1,4 @@
-"""`pluginrack verify` — tiered verification: lint, unit, bundle, pluginval, render, rt-safety."""
+"""`pluginrack verify` — tiered verification: lint, unit, bundle, pluginval, clap-validator, render, rt-safety."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ def verify(ctx: click.Context) -> None:
         ctx.invoke(unit)
         ctx.invoke(bundle)
         ctx.invoke(pluginval_)
+        ctx.invoke(clap_validator)
 
 
 @verify.command(help="Tier 1: fmt + clippy (deny warnings).")
@@ -48,10 +49,24 @@ def _find_pluginval() -> str | None:
     return None
 
 
-@verify.command(name="pluginval", help="Tier 4: run Tracktion pluginval --strictness-level 10.")
+def _find_clap_validator() -> str | None:
+    for candidate in (
+        which("clap-validator"),
+        "tools/clap-validator",
+        "tools/clap-validator.exe",
+        "clap-validator/clap-validator",
+        "clap-validator/clap-validator.exe",
+    ):
+        if candidate and Path(candidate).exists():
+            return candidate
+    return None
+
+
+@verify.command(name="pluginval", help="Tier 4a: run Tracktion pluginval on the VST3 bundle (strictness 10).")
 @click.option("--strictness", default=10, type=int)
 @click.option("--format", "fmt", default="vst3", type=click.Choice(["vst3", "clap"]))
-def pluginval_(strictness: int, fmt: str) -> None:
+@click.argument("wrapper_args", nargs=-1, type=click.UNPROCESSED)
+def pluginval_(strictness: int, fmt: str, wrapper_args: tuple[str, ...]) -> None:
     pv = _find_pluginval()
     if not pv:
         raise click.ClickException(
@@ -74,7 +89,40 @@ def pluginval_(strictness: int, fmt: str) -> None:
     ]
     if os.environ.get("CI") and os.name != "nt" and not os.environ.get("DISPLAY"):
         args.append("--skip-gui-tests")
+    args.extend(wrapper_args)
     args.extend(["--validate", str(bundled)])
+    run(args)
+
+
+@verify.command(
+    name="clap-validator",
+    help=(
+        "Tier 4b: run free-audio/clap-validator on the CLAP bundle. "
+        "Mirrors the CI step. Pass extra flags after '--' to forward to clap-validator."
+    ),
+)
+@click.option(
+    "--only-failed/--all-output",
+    default=True,
+    help="--only-failed hides successful/skipped tests (default, matches CI).",
+)
+@click.argument("wrapper_args", nargs=-1, type=click.UNPROCESSED)
+def clap_validator(only_failed: bool, wrapper_args: tuple[str, ...]) -> None:
+    cv = _find_clap_validator()
+    if not cv:
+        raise click.ClickException(
+            "clap-validator not found. Download from "
+            "https://github.com/free-audio/clap-validator/releases/tag/0.3.2 "
+            "into ./tools/ (or ./clap-validator/) or put it on PATH."
+        )
+    bundled = Path("target/bundled/rack-plugin.clap")
+    if not bundled.exists():
+        raise click.ClickException(f"bundle not found: {bundled} (run pluginrack verify bundle first)")
+    args = [cv, "validate"]
+    if only_failed:
+        args.append("--only-failed")
+    args.extend(wrapper_args)
+    args.append(str(bundled))
     run(args)
 
 
