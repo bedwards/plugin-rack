@@ -456,6 +456,7 @@ impl Vst3Guest {
         }
 
         // setupProcessing.
+        #[allow(clippy::useless_conversion)]
         let mut setup = ProcessSetup {
             processMode: ProcessModes_::kRealtime as i32,
             symbolicSampleSize: SymbolicSampleSizes_::kSample32 as i32,
@@ -549,6 +550,7 @@ impl Vst3Guest {
         self.input_bus.__field0.channelBuffers32 = in_ptrs.as_mut_ptr();
         self.output_bus.__field0.channelBuffers32 = out_ptrs.as_mut_ptr();
 
+        #[allow(clippy::useless_conversion)]
         let mut data = ProcessData {
             processMode: ProcessModes_::kRealtime as i32,
             symbolicSampleSize: SymbolicSampleSizes_::kSample32 as i32,
@@ -660,8 +662,11 @@ unsafe fn create_component(
 
 /// Activate the main stereo audio input and output buses on an IComponent.
 unsafe fn activate_stereo_buses(component: &ComPtr<IComponent>) -> anyhow::Result<()> {
+    #[allow(clippy::useless_conversion)]
     let media_audio = MediaTypes_::kAudio as i32;
+    #[allow(clippy::useless_conversion)]
     let dir_input = BusDirections_::kInput as i32;
+    #[allow(clippy::useless_conversion)]
     let dir_output = BusDirections_::kOutput as i32;
 
     let num_in = component.getBusCount(media_audio, dir_input);
