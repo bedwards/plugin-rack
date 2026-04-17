@@ -3,6 +3,13 @@
 //! v0.3: egui GUI with Row / Column / Wrap layout toggle (issue #8).
 //!       128 macro parameters remain visible to DAW modulation/automation.
 //!       Hosting and IPC land in subsequent issues.
+//! v0.5: persist `link_tag` (issue #12). This is the user-facing group
+//!       identifier used by `rack-ipc::SharedRegistry` for sibling
+//!       discovery. The registry itself is NOT yet attached here — that
+//!       lands with issue #13 (console-view) when we start a heartbeat
+//!       thread in `initialize()` / `deactivate()`. For now we only
+//!       persist the tag so saved-rack sessions preserve their group
+//!       membership across DAW reloads.
 
 use crossbeam::atomic::AtomicCell;
 use nih_plug::prelude::*;
@@ -86,6 +93,20 @@ struct PluginRackParams {
     /// exactly.
     #[persist = "strips"]
     pub strip_order: Arc<Mutex<Vec<StripState>>>,
+
+    /// Persisted IPC link tag (issue #12).
+    ///
+    /// Two plugin-rack instances whose `link_tag` strings match AND which
+    /// run on the same host will discover each other through the shared
+    /// memory registry in `rack-ipc` and render a combined console view.
+    ///
+    /// On first instantiation we generate a fresh per-instance tag so two
+    /// new rack instances do NOT link by accident. The user will later be
+    /// able to edit this string from the GUI (or copy-paste a peer's tag)
+    /// to opt in to a group. That UI lands with issue #13; for now the
+    /// field is persisted and round-trips through DAW save/load.
+    #[persist = "link_tag"]
+    pub link_tag: Arc<Mutex<String>>,
 }
 
 impl Default for PluginRackParams {
@@ -100,6 +121,9 @@ impl Default for PluginRackParams {
             editor_state: default_editor_state(),
             layout_mode: Arc::new(AtomicCell::new(LayoutMode::default())),
             strip_order: Arc::new(Mutex::new(Vec::new())),
+            // Fresh per-instance tag — two new racks do NOT auto-link.
+            // User can later edit this in the GUI to join a group.
+            link_tag: Arc::new(Mutex::new(rack_ipc::fresh_link_tag())),
         }
     }
 }
@@ -228,5 +252,20 @@ mod tests {
     fn strip_order_default_empty() {
         let params = PluginRackParams::default();
         assert!(params.strip_order.lock().is_empty());
+    }
+
+    #[test]
+    fn link_tag_default_is_fresh_and_nonempty() {
+        // Two freshly-instantiated rack plugins must NOT share a tag;
+        // otherwise they'd auto-link, which is not the default UX we
+        // want. The user explicitly opts in by editing the tag later.
+        let p1 = PluginRackParams::default();
+        let p2 = PluginRackParams::default();
+        let t1 = p1.link_tag.lock().clone();
+        let t2 = p2.link_tag.lock().clone();
+        assert!(!t1.is_empty(), "tag must not be empty");
+        assert_ne!(t1, t2, "two fresh rack instances must have distinct tags");
+        // Fits inside rack-ipc's LINK_TAG_MAX (32 bytes).
+        assert!(t1.len() <= rack_ipc::LINK_TAG_MAX);
     }
 }
