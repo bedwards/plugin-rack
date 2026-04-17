@@ -3,6 +3,13 @@
 //! v0.3: egui GUI with Row / Column / Wrap layout toggle (issue #8).
 //!       128 macro parameters remain visible to DAW modulation/automation.
 //!       Hosting and IPC land in subsequent issues.
+//! v0.5: persist `link_tag` (issue #12). This is the user-facing group
+//!       identifier used by `rack-ipc::SharedRegistry` for sibling
+//!       discovery. The registry itself is NOT yet attached here — that
+//!       lands with issue #13 (console-view) when we start a heartbeat
+//!       thread in `initialize()` / `deactivate()`. For now we only
+//!       persist the tag so saved-rack sessions preserve their group
+//!       membership across DAW reloads.
 
 use crossbeam::atomic::AtomicCell;
 use nih_plug::prelude::*;
@@ -86,6 +93,20 @@ struct PluginRackParams {
     /// exactly.
     #[persist = "strips"]
     pub strip_order: Arc<Mutex<Vec<StripState>>>,
+
+    /// Persisted IPC link tag (issue #12).
+    ///
+    /// Two plugin-rack instances whose `link_tag` strings match AND which
+    /// run on the same host will discover each other through the shared
+    /// memory registry in `rack-ipc` and render a combined console view.
+    ///
+    /// On first instantiation we generate a fresh per-instance tag so two
+    /// new rack instances do NOT link by accident. The user will later be
+    /// able to edit this string from the GUI (or copy-paste a peer's tag)
+    /// to opt in to a group. That UI lands with issue #13; for now the
+    /// field is persisted and round-trips through DAW save/load.
+    #[persist = "link_tag"]
+    pub link_tag: Arc<Mutex<String>>,
 }
 
 impl Default for PluginRackParams {
@@ -100,6 +121,13 @@ impl Default for PluginRackParams {
             editor_state: default_editor_state(),
             layout_mode: Arc::new(AtomicCell::new(LayoutMode::default())),
             strip_order: Arc::new(Mutex::new(Vec::new())),
+            // Default is empty — rack is UNLINKED. clap-validator requires
+            // `Default::default()` to be deterministic across instances
+            // (its "same params to two instances" test compares state);
+            // a per-instance fresh tag would break that. The actual
+            // registry-slot claim happens lazily from `initialize()` and
+            // generates a tag there if the persisted value is still empty.
+            link_tag: Arc::new(Mutex::new(String::new())),
         }
     }
 }
@@ -228,5 +256,16 @@ mod tests {
     fn strip_order_default_empty() {
         let params = PluginRackParams::default();
         assert!(params.strip_order.lock().is_empty());
+    }
+
+    #[test]
+    fn link_tag_default_is_empty_unlinked() {
+        // Default must be deterministic across instances (clap-validator
+        // "same params to two instances" test compares defaults).
+        // The rack is UNLINKED until the user opts into a group via the
+        // GUI (issue #13) or a subsequent PR wires lazy tag generation
+        // inside `initialize()`.
+        let p = PluginRackParams::default();
+        assert!(p.link_tag.lock().is_empty());
     }
 }

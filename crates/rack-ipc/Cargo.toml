@@ -1,6 +1,6 @@
 [package]
 name = "rack-ipc"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,3 +12,8 @@ description = "Inter-instance linking via shared memory for plugin-rack"
 rack-core.workspace = true
 anyhow.workspace = true
 log.workspace = true
+bytemuck = { version = "1.25", features = ["derive"] }
+memmap2 = "0.9"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
