@@ -22,12 +22,21 @@ jobs:
           - runner: macos-15
             pluginval_url: https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
             pluginval_bin: ./pluginval/pluginval.app/Contents/MacOS/pluginval
+            clap_validator_url: https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-macos-universal.tar.gz
+            clap_validator_archive: clap-validator.tar.gz
+            clap_validator_bin: ./clap-validator/clap-validator
           - runner: ubuntu-24.04
             pluginval_url: https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Linux.zip
             pluginval_bin: ./pluginval/pluginval
+            clap_validator_url: https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-ubuntu-18.04.tar.gz
+            clap_validator_archive: clap-validator.tar.gz
+            clap_validator_bin: ./clap-validator/clap-validator
           - runner: windows-2025
             pluginval_url: https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip
             pluginval_bin: ./pluginval/pluginval.exe
+            clap_validator_url: https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-windows.zip
+            clap_validator_archive: clap-validator.zip
+            clap_validator_bin: ./clap-validator/clap-validator.exe
     steps:
       - uses: actions/checkout@v6
 
@@ -67,8 +76,7 @@ jobs:
           unzip -oq pluginval.zip -d pluginval
 
       # pluginval (JUCE-based, v1.0.x) does not support CLAP.
-      # CLAP validation is tracked separately — see the
-      # "Replace CLAP validation with clap-validator" issue.
+      # CLAP validation runs via clap-validator below.
       - name: pluginval (VST3, strictness 5)
         shell: bash
         # All CI runners are headless — skip GUI tests everywhere.
@@ -76,6 +84,29 @@ jobs:
         # will abort pluginval's Editor test. Full GUI validation lives
         # in nightly.yml on a proper runner.
         run: ${{ matrix.pluginval_bin }} --strictness-level 5 --validate-in-process --skip-gui-tests --validate target/bundled/rack-plugin.vst3
+
+      # --- CLAP validation via free-audio/clap-validator ---
+      # Version pinned to 0.3.2 (latest stable as of 2026-04) for CI
+      # reproducibility; do not move to a floating tag. Upstream bumps
+      # are their own PR.
+      - name: Install clap-validator
+        shell: bash
+        run: |
+          mkdir -p clap-validator
+          curl -L -o "${{ matrix.clap_validator_archive }}" "${{ matrix.clap_validator_url }}"
+          case "${{ matrix.clap_validator_archive }}" in
+            *.zip) unzip -oq "${{ matrix.clap_validator_archive }}" -d clap-validator ;;
+            *.tar.gz) tar -xzf "${{ matrix.clap_validator_archive }}" -C clap-validator --strip-components=1 ;;
+          esac
+          chmod +x "${{ matrix.clap_validator_bin }}" || true
+          "${{ matrix.clap_validator_bin }}" --version
+
+      # clap-validator is a pure-Rust headless validator; no display
+      # server needed on Linux. --only-failed keeps logs concise.
+      # Exit code is non-zero if any test fails.
+      - name: clap-validator (CLAP)
+        shell: bash
+        run: ${{ matrix.clap_validator_bin }} validate --only-failed target/bundled/rack-plugin.clap
 
       - uses: actions/upload-artifact@v7
         if: always()

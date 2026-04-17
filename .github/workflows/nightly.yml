@@ -26,6 +26,17 @@ jobs:
         run: |
           PV=./pluginval/pluginval.app/Contents/MacOS/pluginval
           $PV --strictness-level 10 --validate-in-process --validate target/bundled/rack-plugin.vst3
+      - name: install clap-validator
+        run: |
+          mkdir -p clap-validator
+          curl -L -o clap-validator.tar.gz https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-macos-universal.tar.gz
+          tar -xzf clap-validator.tar.gz -C clap-validator --strip-components=1
+          chmod +x ./clap-validator/clap-validator
+          ./clap-validator/clap-validator --version
+      - name: clap-validator (CLAP, full test suite)
+        # Nightly runs the full suite (no --only-failed) so we get a
+        # complete report in the logs; exit code still gates the job.
+        run: ./clap-validator/clap-validator validate target/bundled/rack-plugin.clap
       - uses: actions/upload-artifact@v7
         with:
           name: nightly-bundled-universal
