@@ -25,4 +25,4 @@ vst3 = "0.3"
 # NSView requires NSResponder feature. NSThread enables MainThreadMarker::new().
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSView", "NSResponder"] }
-objc2-foundation = { version = "0.2", features = ["NSThread"] }
+objc2-foundation = { version = "0.3", features = ["NSThread"] }
