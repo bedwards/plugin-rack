@@ -37,7 +37,7 @@ rack-gui = { path = "crates/rack-gui" }
 rack-ipc = { path = "crates/rack-ipc" }
 
 # macOS NSView embedding for guest editor (issue #6)
-objc2 = "0.5"
+objc2 = "0.6"
 objc2-app-kit = { version = "0.2", features = ["NSView", "NSResponder", "NSWindow"] }
 
 # Shared
