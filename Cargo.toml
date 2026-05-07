@@ -23,7 +23,7 @@ nih_plug = { git = "https://github.com/BillyDM/nih-plug.git", rev = "3e0c4ac0430
 nih_plug_egui = { git = "https://github.com/BillyDM/nih-plug.git", rev = "3e0c4ac0430bffd5526b7325b8362369986d24af" }
 nih_plug_xtask = { git = "https://github.com/BillyDM/nih-plug.git", rev = "3e0c4ac0430bffd5526b7325b8362369986d24af" }
 # egui pinned to match nih_plug_egui's bundled version
-egui = { version = "0.34.1", default-features = false, features = ["bytemuck"] }
+egui = { version = "0.34.2", default-features = false, features = ["bytemuck"] }
 
 # clack: CLAP hosting in Rust (pinned git SHA; no crates.io release as of 2026-04)
 clack-host = { git = "https://github.com/prokopyl/clack.git", rev = "4541f03792635dfdc6be9441a01b786e9b4ccf18", package = "clack-host" }
