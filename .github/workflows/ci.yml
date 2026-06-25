@@ -38,7 +38,7 @@ jobs:
             clap_validator_archive: clap-validator.zip
             clap_validator_bin: ./clap-validator/clap-validator.exe
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -131,7 +131,7 @@ jobs:
     name: python / pluginrack CLI
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - name: sync + lint + test
         working-directory: pluginrack
